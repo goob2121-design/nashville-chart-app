@@ -1,0 +1,535 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+
+type SavedChart = {
+  artist?: string;
+  capo?: string;
+  id: string;
+  key?: string;
+  notes?: string;
+  savedAt?: string;
+  timeSignature?: string;
+  title?: string;
+};
+
+type Setlist = {
+  id: string;
+  name: string;
+  songIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+const CHARTS_STORAGE_KEY = 'nashville-chart-builder:saved-charts';
+const SETLISTS_STORAGE_KEY = 'nashville-chart-builder:setlists';
+const FAVORITE_SETLISTS_STORAGE_KEY = 'nashville-chart-builder:favorite-setlists';
+
+const INPUT_CLASS =
+  'w-full rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20';
+const SECONDARY_BUTTON_CLASS =
+  'rounded-xl border border-amber-900/40 bg-stone-950/40 px-3.5 py-2.5 text-sm font-medium text-stone-100 transition hover:bg-stone-900/80 disabled:opacity-50 print:hidden';
+const PRIMARY_BUTTON_CLASS =
+  'rounded-xl bg-amber-400 px-4 py-3 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:opacity-50 print:hidden';
+const EMPHASIS_BUTTON_CLASS =
+  'rounded-xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-stone-950 transition hover:bg-emerald-300 disabled:opacity-50 print:hidden';
+
+function chartTitle(chart?: SavedChart) {
+  return chart?.title?.trim() || chart?.id || 'Missing song';
+}
+
+function chartArtist(chart?: SavedChart) {
+  return chart?.artist?.trim() || '';
+}
+
+function makeId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatUpdatedAt(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Not available';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+}
+
+function uniqueName(baseName: string, setlists: Setlist[]) {
+  const cleanName = baseName.trim() || 'Untitled Setlist';
+  const names = new Set(setlists.map((setlist) => setlist.name));
+
+  if (!names.has(cleanName)) {
+    return cleanName;
+  }
+
+  let index = 2;
+  let nextName = `${cleanName} ${index}`;
+
+  while (names.has(nextName)) {
+    index += 1;
+    nextName = `${cleanName} ${index}`;
+  }
+
+  return nextName;
+}
+
+export default function SetlistsPage() {
+  const [hasMounted, setHasMounted] = useState(false);
+  const [charts, setCharts] = useState<SavedChart[]>([]);
+  const [setlists, setSetlists] = useState<Setlist[]>([]);
+  const [favoriteSetlistIds, setFavoriteSetlistIds] = useState<string[]>([]);
+  const [newSetlistName, setNewSetlistName] = useState('');
+  const [selectedSetlistId, setSelectedSetlistId] = useState('');
+  const [selectedSongId, setSelectedSongId] = useState('');
+  const [renameValue, setRenameValue] = useState('');
+
+  useEffect(() => {
+    try {
+      const storedCharts = window.localStorage.getItem(CHARTS_STORAGE_KEY);
+      const storedSetlists = window.localStorage.getItem(SETLISTS_STORAGE_KEY);
+      const storedFavorites = window.localStorage.getItem(FAVORITE_SETLISTS_STORAGE_KEY);
+      const parsedSetlists = storedSetlists ? (JSON.parse(storedSetlists) as Setlist[]) : [];
+
+      setCharts(storedCharts ? (JSON.parse(storedCharts) as SavedChart[]) : []);
+      setSetlists(parsedSetlists);
+      setFavoriteSetlistIds(storedFavorites ? (JSON.parse(storedFavorites) as string[]) : []);
+      setSelectedSetlistId(parsedSetlists[0]?.id ?? '');
+      setRenameValue(parsedSetlists[0]?.name ?? '');
+    } catch {
+      setCharts([]);
+      setSetlists([]);
+      setFavoriteSetlistIds([]);
+      setSelectedSetlistId('');
+      setRenameValue('');
+    } finally {
+      setHasMounted(true);
+    }
+  }, []);
+
+  const chartMap = useMemo(() => new Map(charts.map((chart) => [chart.id, chart])), [charts]);
+  const favoriteSetlistSet = useMemo(() => new Set(favoriteSetlistIds), [favoriteSetlistIds]);
+  const sortedCharts = useMemo(
+    () => [...charts].sort((first, second) => chartTitle(first).localeCompare(chartTitle(second), undefined, { sensitivity: 'base' })),
+    [charts]
+  );
+  const sortedSetlists = useMemo(
+    () =>
+      [...setlists].sort((first, second) => {
+        const favoriteDelta = Number(favoriteSetlistSet.has(second.id)) - Number(favoriteSetlistSet.has(first.id));
+
+        if (favoriteDelta !== 0) {
+          return favoriteDelta;
+        }
+
+        return new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime();
+      }),
+    [favoriteSetlistSet, setlists]
+  );
+  const selectedSetlist = setlists.find((setlist) => setlist.id === selectedSetlistId) ?? null;
+
+  function persistSetlists(nextSetlists: Setlist[], nextSelectedId = selectedSetlistId) {
+    setSetlists(nextSetlists);
+    window.localStorage.setItem(SETLISTS_STORAGE_KEY, JSON.stringify(nextSetlists));
+    setSelectedSetlistId(nextSelectedId);
+    setRenameValue(nextSetlists.find((setlist) => setlist.id === nextSelectedId)?.name ?? '');
+  }
+
+  function persistFavoriteSetlists(nextFavoriteIds: string[]) {
+    setFavoriteSetlistIds(nextFavoriteIds);
+    window.localStorage.setItem(FAVORITE_SETLISTS_STORAGE_KEY, JSON.stringify(nextFavoriteIds));
+  }
+
+  function updateSelectedSetlist(updater: (setlist: Setlist) => Setlist) {
+    if (!selectedSetlist) {
+      return;
+    }
+
+    const nextSetlist = updater(selectedSetlist);
+    persistSetlists(setlists.map((setlist) => (setlist.id === selectedSetlist.id ? nextSetlist : setlist)), nextSetlist.id);
+  }
+
+  function handleSelectSetlist(id: string) {
+    const nextSetlist = setlists.find((setlist) => setlist.id === id);
+    setSelectedSetlistId(id);
+    setRenameValue(nextSetlist?.name ?? '');
+  }
+
+  function handleCreateSetlist() {
+    const now = new Date().toISOString();
+    const nextSetlist: Setlist = {
+      id: makeId('setlist'),
+      name: uniqueName(newSetlistName || 'New Setlist', setlists),
+      songIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    persistSetlists([nextSetlist, ...setlists], nextSetlist.id);
+    setNewSetlistName('');
+  }
+
+  function handleRenameSetlist() {
+    const nextName = renameValue.trim();
+
+    if (!selectedSetlist || !nextName) {
+      return;
+    }
+
+    updateSelectedSetlist((setlist) => ({ ...setlist, name: nextName, updatedAt: new Date().toISOString() }));
+  }
+
+  function handleDeleteSetlist(setlist: Setlist) {
+    if (!window.confirm(`Delete setlist "${setlist.name}"?`)) {
+      return;
+    }
+
+    const nextSetlists = setlists.filter((item) => item.id !== setlist.id);
+    const nextSelectedId = nextSetlists[0]?.id ?? '';
+
+    persistSetlists(nextSetlists, nextSelectedId);
+    persistFavoriteSetlists(favoriteSetlistIds.filter((id) => id !== setlist.id));
+  }
+
+  function handleDuplicateSetlist(setlist: Setlist) {
+    const now = new Date().toISOString();
+    const duplicatedSetlist: Setlist = {
+      ...setlist,
+      id: makeId('setlist'),
+      name: uniqueName(`${setlist.name} Copy`, setlists),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    persistSetlists([duplicatedSetlist, ...setlists], duplicatedSetlist.id);
+  }
+
+  function handleToggleFavorite(setlist: Setlist) {
+    const nextFavoriteIds = favoriteSetlistSet.has(setlist.id)
+      ? favoriteSetlistIds.filter((id) => id !== setlist.id)
+      : [...favoriteSetlistIds, setlist.id];
+
+    persistFavoriteSetlists(nextFavoriteIds);
+  }
+
+  function handleAddSong() {
+    if (!selectedSongId) {
+      return;
+    }
+
+    updateSelectedSetlist((setlist) => ({
+      ...setlist,
+      songIds: [...setlist.songIds, selectedSongId],
+      updatedAt: new Date().toISOString(),
+    }));
+    setSelectedSongId('');
+  }
+
+  function handleRemoveSong(index: number) {
+    updateSelectedSetlist((setlist) => ({
+      ...setlist,
+      songIds: setlist.songIds.filter((_, songIndex) => songIndex !== index),
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  function handleMoveSong(index: number, direction: -1 | 1) {
+    updateSelectedSetlist((setlist) => {
+      const nextIndex = index + direction;
+
+      if (nextIndex < 0 || nextIndex >= setlist.songIds.length) {
+        return setlist;
+      }
+
+      const nextSongIds = [...setlist.songIds];
+      const currentSongId = nextSongIds[index];
+      nextSongIds[index] = nextSongIds[nextIndex];
+      nextSongIds[nextIndex] = currentSongId;
+
+      return { ...setlist, songIds: nextSongIds, updatedAt: new Date().toISOString() };
+    });
+  }
+
+  function handleOpenSong(songId: string) {
+    window.location.href = `/?openChart=${encodeURIComponent(songId)}`;
+  }
+
+  function handleOpenAdjacentSong(index: number, direction: -1 | 1) {
+    if (!selectedSetlist) {
+      return;
+    }
+
+    const nextSongId = selectedSetlist.songIds[index + direction];
+
+    if (nextSongId && chartMap.has(nextSongId)) {
+      handleOpenSong(nextSongId);
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_28%),linear-gradient(180deg,_#1c1917_0%,_#0c0a09_48%,_#020617_100%)] px-4 py-8 text-stone-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
+      <style jsx global>{`
+        .print-only {
+          display: none;
+        }
+
+        @media print {
+          .no-print,
+          button,
+          input,
+          select {
+            display: none !important;
+          }
+
+          .print-only {
+            display: block !important;
+          }
+        }
+      `}</style>
+
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 print:max-w-none print:gap-4">
+        <header className="no-print flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <p className="text-sm uppercase tracking-[0.3em] text-amber-300/80">Nashville Number System</p>
+            <h1 className="text-3xl font-semibold text-white sm:text-4xl">Setlists</h1>
+          </div>
+          <nav className="flex flex-wrap gap-2">
+            <Link href="/library" className={SECONDARY_BUTTON_CLASS}>
+              Song Library
+            </Link>
+            <Link href="/" className={SECONDARY_BUTTON_CLASS}>
+              Back to Builder
+            </Link>
+          </nav>
+        </header>
+
+        {!hasMounted ? (
+          <section className="rounded-3xl border border-amber-950/30 bg-stone-900/75 p-5 text-sm text-stone-400 print:hidden">
+            Loading setlists...
+          </section>
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)] print:block">
+            <aside className="no-print space-y-4 rounded-3xl border border-amber-950/30 bg-stone-900/75 p-4 shadow-xl shadow-black/10 backdrop-blur sm:p-5">
+              <section className="space-y-3">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Create Setlist</h2>
+                <input
+                  className={INPUT_CLASS}
+                  value={newSetlistName}
+                  onChange={(event) => setNewSetlistName(event.target.value)}
+                  placeholder="Setlist name"
+                />
+                <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleCreateSetlist}>
+                  Create Setlist
+                </button>
+              </section>
+
+              <section className="space-y-3">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Saved Setlists</h2>
+                {sortedSetlists.length ? (
+                  <div className="space-y-2">
+                    {sortedSetlists.map((setlist) => {
+                      const isSelected = setlist.id === selectedSetlistId;
+                      const isFavorite = favoriteSetlistSet.has(setlist.id);
+
+                      return (
+                        <button
+                          key={setlist.id}
+                          type="button"
+                          className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                            isSelected
+                              ? 'border-emerald-500 bg-emerald-500/15'
+                              : 'border-amber-950/30 bg-stone-950/45 hover:bg-stone-950/70'
+                          }`}
+                          onClick={() => handleSelectSetlist(setlist.id)}
+                        >
+                          <span className="flex items-start justify-between gap-3">
+                            <span className="min-w-0">
+                              <span className="block break-words text-sm font-semibold text-white">{setlist.name}</span>
+                              <span className="mt-1 block text-xs text-stone-400">
+                                {setlist.songIds.length} song{setlist.songIds.length === 1 ? '' : 's'} - updated {formatUpdatedAt(setlist.updatedAt)}
+                              </span>
+                            </span>
+                            <span className="text-amber-300">{isFavorite ? '★' : ''}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-stone-400">No setlists yet.</p>
+                )}
+              </section>
+            </aside>
+
+            <section className="rounded-3xl border border-amber-950/30 bg-stone-900/75 p-4 shadow-xl shadow-black/10 backdrop-blur sm:p-5 print:border-0 print:bg-white print:p-0 print:shadow-none">
+              {selectedSetlist ? (
+                <>
+                  <div className="no-print space-y-4">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-start gap-3">
+                          <button
+                            type="button"
+                            className={`h-10 w-10 shrink-0 rounded-xl border text-lg transition ${
+                              favoriteSetlistSet.has(selectedSetlist.id)
+                                ? 'border-amber-400 bg-amber-400 text-stone-950'
+                                : 'border-amber-900/40 bg-stone-950/40 text-stone-300 hover:bg-stone-900/80'
+                            }`}
+                            onClick={() => handleToggleFavorite(selectedSetlist)}
+                            aria-label={favoriteSetlistSet.has(selectedSetlist.id) ? 'Remove from favorites' : 'Add to favorites'}
+                          >
+                            {favoriteSetlistSet.has(selectedSetlist.id) ? '★' : '☆'}
+                          </button>
+                          <div>
+                            <h2 className="break-words text-2xl font-semibold text-white">{selectedSetlist.name}</h2>
+                            <p className="mt-1 text-sm text-stone-400">Updated {formatUpdatedAt(selectedSetlist.updatedAt)}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleDuplicateSetlist(selectedSetlist)}>
+                          Duplicate
+                        </button>
+                        <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>
+                          Print Setlist
+                        </button>
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleDeleteSetlist(selectedSetlist)}>
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+
+                    <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                      <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                        Rename Setlist
+                        <input className={INPUT_CLASS} value={renameValue} onChange={(event) => setRenameValue(event.target.value)} />
+                      </label>
+                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRenameSetlist} disabled={!renameValue.trim()}>
+                        Rename
+                      </button>
+                    </section>
+
+                    <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                      <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                        Add Song From Library
+                        <select className={INPUT_CLASS} value={selectedSongId} onChange={(event) => setSelectedSongId(event.target.value)}>
+                          <option value="">Select a song</option>
+                          {sortedCharts.map((chart) => (
+                            <option key={chart.id} value={chart.id}>
+                              {chartTitle(chart)}{chart.key ? ` - ${chart.key}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleAddSong} disabled={!selectedSongId}>
+                        Add Song
+                      </button>
+                    </section>
+                  </div>
+
+                  <div className="print-only text-black">
+                    <h1 className="text-2xl font-semibold">{selectedSetlist.name}</h1>
+                  </div>
+
+                  <ol className="mt-5 space-y-3 print:mt-4 print:list-decimal print:space-y-2 print:pl-6">
+                    {selectedSetlist.songIds.length ? (
+                      selectedSetlist.songIds.map((songId, index) => {
+                        const chart = chartMap.get(songId);
+                        const previousSong = selectedSetlist.songIds[index - 1];
+                        const nextSong = selectedSetlist.songIds[index + 1];
+
+                        return (
+                          <li
+                            key={`${songId}-${index}`}
+                            className="rounded-2xl border border-amber-950/25 bg-stone-950/45 p-4 print:rounded-none print:border-0 print:bg-white print:p-0"
+                          >
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between print:block">
+                              <div className="min-w-0">
+                                <p className="text-xs uppercase tracking-[0.18em] text-stone-500 print:hidden">Song {index + 1}</p>
+                                <h3 className="break-words text-lg font-semibold text-white print:inline print:text-base print:text-black">
+                                  {chartTitle(chart)}
+                                </h3>
+                                {chartArtist(chart) ? <p className="mt-1 text-sm text-stone-300 print:hidden">{chartArtist(chart)}</p> : null}
+                                <p className="mt-2 text-sm text-stone-300 print:inline print:text-black">
+                                  {chart ? (
+                                    <>
+                                      {chart.key ? `Key: ${chart.key}` : 'Key: N/A'}
+                                      {chart.capo?.trim() ? ` | Capo: ${chart.capo}` : ''}
+                                    </>
+                                  ) : (
+                                    'Missing song'
+                                  )}
+                                </p>
+                                {chart?.notes?.trim() ? (
+                                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-stone-300 print:mt-1 print:text-black">
+                                    Notes: {chart.notes}
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              <div className="grid gap-2 sm:grid-cols-3 lg:w-72 lg:grid-cols-1 print:hidden">
+                                <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => handleOpenSong(songId)} disabled={!chart}>
+                                  Open
+                                </button>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleMoveSong(index, -1)} disabled={index === 0}>
+                                    Up
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={SECONDARY_BUTTON_CLASS}
+                                    onClick={() => handleMoveSong(index, 1)}
+                                    disabled={index === selectedSetlist.songIds.length - 1}
+                                  >
+                                    Down
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    className={SECONDARY_BUTTON_CLASS}
+                                    onClick={() => handleOpenAdjacentSong(index, -1)}
+                                    disabled={!previousSong || !chartMap.has(previousSong)}
+                                  >
+                                    Previous
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={SECONDARY_BUTTON_CLASS}
+                                    onClick={() => handleOpenAdjacentSong(index, 1)}
+                                    disabled={!nextSong || !chartMap.has(nextSong)}
+                                  >
+                                    Next
+                                  </button>
+                                </div>
+                                <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => handleRemoveSong(index)}>
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })
+                    ) : (
+                      <li className="rounded-2xl border border-amber-950/25 bg-stone-950/45 p-4 text-sm text-stone-400 print:hidden">
+                        Add songs from the library to build this setlist.
+                      </li>
+                    )}
+                  </ol>
+                </>
+              ) : (
+                <p className="text-sm text-stone-400 print:hidden">Create or select a setlist to begin.</p>
+              )}
+            </section>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}

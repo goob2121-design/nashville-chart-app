@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 const MAJOR_KEYS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
@@ -1002,17 +1003,16 @@ export default function Page() {
   useEffect(() => {
     const mountTimer = window.setTimeout(() => {
       setHasMounted(true);
+      let parsedSavedCharts: SavedChart[] = [];
 
       try {
         const saved = window.localStorage.getItem(STORAGE_KEY);
         const storedToolbarPreference = window.localStorage.getItem(SYMBOL_TOOLBAR_STORAGE_KEY);
         const storedSectionState = window.localStorage.getItem(SECTION_OPEN_STORAGE_KEY);
 
-        if (saved) {
-          const parsed = JSON.parse(saved) as SavedChart[];
-          setSavedCharts(parsed);
-          setSelectedSavedChartId(parsed[0]?.id ?? '');
-        }
+        parsedSavedCharts = saved ? (JSON.parse(saved) as SavedChart[]) : [];
+        setSavedCharts(parsedSavedCharts);
+        setSelectedSavedChartId(parsedSavedCharts[0]?.id ?? '');
 
         if (storedToolbarPreference === 'true' || storedToolbarPreference === 'false') {
           setSymbolsExpanded(storedToolbarPreference === 'true');
@@ -1033,6 +1033,19 @@ export default function Page() {
 
       const params = new URLSearchParams(window.location.search);
       const sharedChart = params.get('chart');
+      const openChartId = params.get('openChart');
+
+      if (openChartId) {
+        const chartToOpen = parsedSavedCharts.find((chart) => chart.id === openChartId);
+
+        if (chartToOpen) {
+          applySnapshot(chartToOpen);
+          setSelectedSavedChartId(chartToOpen.id);
+        }
+
+        window.history.replaceState(null, '', window.location.pathname);
+        return;
+      }
 
       if (!sharedChart) {
         return;
@@ -1371,7 +1384,17 @@ export default function Page() {
           <div className="no-print space-y-4">
             <div className="space-y-2">
               <p className="text-sm uppercase tracking-[0.3em] text-amber-300/80">Nashville Number System</p>
-              <h1 className="text-3xl font-semibold text-white sm:text-4xl">Chart Builder</h1>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <h1 className="text-3xl font-semibold text-white sm:text-4xl">Chart Builder</h1>
+                <nav className="flex flex-wrap gap-2">
+                  <Link href="/library" className={SECONDARY_BUTTON_CLASS}>
+                    Song Library
+                  </Link>
+                  <Link href="/setlists" className={SECONDARY_BUTTON_CLASS}>
+                    Setlists
+                  </Link>
+                </nav>
+              </div>
               <p className="max-w-3xl text-sm leading-6 text-stone-300">
                 Build bluegrass-friendly charts with a focused Quick Mode for fast song setup, or switch to Pro Mode when you need the full charting toolkit.
               </p>
