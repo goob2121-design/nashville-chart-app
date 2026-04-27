@@ -2,6 +2,15 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import {
+  deleteCloudSetlist,
+  fetchCloudCharts,
+  fetchCloudSetlists,
+  getInitialCloudStatus,
+  updateCloudSetlistFavorite,
+  upsertCloudSetlist,
+  type CloudStatus,
+} from '../lib/cloudSync';
 
 type SavedChart = {
   artist?: string;
@@ -20,6 +29,12 @@ type Setlist = {
   songIds: string[];
   createdAt: string;
   updatedAt: string;
+};
+
+type SharedSetlistData = {
+  setlist: Setlist;
+  charts: SavedChart[];
+  sharedAt: string;
 };
 
 const CHARTS_STORAGE_KEY = 'nashville-chart-builder:saved-charts';
@@ -79,6 +94,116 @@ function uniqueName(baseName: string, setlists: Setlist[]) {
   return nextName;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isSavedChart(value: unknown): value is SavedChart {
+  return isRecord(value) && typeof value.id === 'string';
+}
+
+function isSetlist(value: unknown): value is Setlist {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    Array.isArray(value.songIds) &&
+    value.songIds.every((songId) => typeof songId === 'string') &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string'
+  );
+}
+
+function deserializeSharedSetlist(value: string) {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
+
+    if (!isRecord(parsed) || !isSetlist(parsed.setlist) || !Array.isArray(parsed.charts) || !parsed.charts.every(isSavedChart)) {
+      return null;
+    }
+
+    return {
+      setlist: parsed.setlist,
+      charts: parsed.charts,
+      sharedAt: typeof parsed.sharedAt === 'string' ? parsed.sharedAt : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function SetlistReadOnlyView({ data }: { data: SharedSetlistData }) {
+  const chartMap = new Map(data.charts.map((chart) => [chart.id, chart]));
+
+  return (
+    <main className="min-h-screen bg-zinc-950 px-4 py-8 text-zinc-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
+      <style jsx global>{`
+        .print-only {
+          display: none;
+        }
+
+        @media print {
+          .no-print {
+            display: none !important;
+          }
+
+          .print-only {
+            display: block !important;
+          }
+        }
+      `}</style>
+
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 print:max-w-none print:gap-4">
+        <header className="no-print flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-zinc-500">Shared Setlist</p>
+            <h1 className="text-3xl font-semibold text-white">{data.setlist.name}</h1>
+          </div>
+          <button
+            type="button"
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+            onClick={() => window.print()}
+          >
+            Print
+          </button>
+        </header>
+
+        <section className="rounded-3xl border border-zinc-800 bg-black/70 p-6 shadow-xl shadow-black/20 print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none">
+          <h2 className="text-2xl font-semibold text-white print:text-black">{data.setlist.name}</h2>
+          <ol className="mt-5 space-y-3 print:list-decimal print:space-y-2 print:pl-6">
+            {data.setlist.songIds.length ? (
+              data.setlist.songIds.map((songId, index) => {
+                const chart = chartMap.get(songId);
+
+                return (
+                  <li key={`${songId}-${index}`} className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 print:rounded-none print:border-0 print:bg-white print:p-0">
+                    <h3 className="text-lg font-semibold text-white print:inline print:text-base print:text-black">{chartTitle(chart)}</h3>
+                    <p className="mt-2 text-sm text-zinc-300 print:inline print:text-black">
+                      {chart ? (
+                        <>
+                          {chart.key ? `Key: ${chart.key}` : 'Key: N/A'}
+                          {chart.capo?.trim() ? ` | Capo: ${chart.capo}` : ''}
+                        </>
+                      ) : (
+                        'Missing song'
+                      )}
+                    </p>
+                    {chart?.notes?.trim() ? (
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-300 print:mt-1 print:text-black">Notes: {chart.notes}</p>
+                    ) : null}
+                  </li>
+                );
+              })
+            ) : (
+              <li className="text-sm text-zinc-400 print:text-black">No songs in this setlist.</li>
+            )}
+          </ol>
+        </section>
+      </div>
+    </main>
+  );
+}
+
 export default function SetlistsPage() {
   const [hasMounted, setHasMounted] = useState(false);
   const [charts, setCharts] = useState<SavedChart[]>([]);
@@ -88,9 +213,23 @@ export default function SetlistsPage() {
   const [selectedSetlistId, setSelectedSetlistId] = useState('');
   const [selectedSongId, setSelectedSongId] = useState('');
   const [renameValue, setRenameValue] = useState('');
+  const [shareUrl, setShareUrl] = useState('');
+  const [shareMessage, setShareMessage] = useState('');
+  const [sharedSetlistData, setSharedSetlistData] = useState<SharedSetlistData | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus>(getInitialCloudStatus());
+  const [cloudMessage, setCloudMessage] = useState('');
 
   useEffect(() => {
-    try {
+    const loadSetlists = async () => {
+      try {
+      const params = new URLSearchParams(window.location.search);
+      const sharedSetlist = params.get('shareSetlist');
+
+      if (sharedSetlist) {
+        setSharedSetlistData(deserializeSharedSetlist(sharedSetlist));
+        return;
+      }
+
       const storedCharts = window.localStorage.getItem(CHARTS_STORAGE_KEY);
       const storedSetlists = window.localStorage.getItem(SETLISTS_STORAGE_KEY);
       const storedFavorites = window.localStorage.getItem(FAVORITE_SETLISTS_STORAGE_KEY);
@@ -101,15 +240,43 @@ export default function SetlistsPage() {
       setFavoriteSetlistIds(storedFavorites ? (JSON.parse(storedFavorites) as string[]) : []);
       setSelectedSetlistId(parsedSetlists[0]?.id ?? '');
       setRenameValue(parsedSetlists[0]?.name ?? '');
+
+      if (getInitialCloudStatus().connected) {
+        const [cloudChartsResult, cloudSetlistsResult] = await Promise.all([fetchCloudCharts(), fetchCloudSetlists()]);
+
+        if (cloudChartsResult.error || cloudSetlistsResult.error) {
+          setCloudStatus({
+            connected: false,
+            label: 'Local Only',
+            message: `Cloud Sync: Local Only. ${cloudChartsResult.error || cloudSetlistsResult.error}`,
+          });
+          setCloudMessage('Supabase is unavailable right now. Showing local setlist data.');
+        } else {
+          setCharts(cloudChartsResult.charts);
+          setSetlists(cloudSetlistsResult.setlists);
+          setFavoriteSetlistIds(cloudSetlistsResult.favoriteIds);
+          setSelectedSetlistId(cloudSetlistsResult.setlists[0]?.id ?? '');
+          setRenameValue(cloudSetlistsResult.setlists[0]?.name ?? '');
+          window.localStorage.setItem(CHARTS_STORAGE_KEY, JSON.stringify(cloudChartsResult.charts));
+          window.localStorage.setItem(SETLISTS_STORAGE_KEY, JSON.stringify(cloudSetlistsResult.setlists));
+          window.localStorage.setItem(FAVORITE_SETLISTS_STORAGE_KEY, JSON.stringify(cloudSetlistsResult.favoriteIds));
+          setCloudStatus({ connected: true, label: 'Connected', message: 'Cloud Sync: Connected' });
+          setCloudMessage('');
+        }
+      }
     } catch {
       setCharts([]);
       setSetlists([]);
       setFavoriteSetlistIds([]);
       setSelectedSetlistId('');
       setRenameValue('');
+      setCloudStatus({ connected: false, label: 'Local Only', message: 'Cloud Sync: Local Only. Setlists could not be loaded.' });
     } finally {
       setHasMounted(true);
     }
+    };
+
+    void loadSetlists();
   }, []);
 
   const chartMap = useMemo(() => new Map(charts.map((chart) => [chart.id, chart])), [charts]);
@@ -145,13 +312,27 @@ export default function SetlistsPage() {
     window.localStorage.setItem(FAVORITE_SETLISTS_STORAGE_KEY, JSON.stringify(nextFavoriteIds));
   }
 
-  function updateSelectedSetlist(updater: (setlist: Setlist) => Setlist) {
+  async function updateSelectedSetlist(updater: (setlist: Setlist) => Setlist) {
     if (!selectedSetlist) {
       return;
     }
 
     const nextSetlist = updater(selectedSetlist);
     persistSetlists(setlists.map((setlist) => (setlist.id === selectedSetlist.id ? nextSetlist : setlist)), nextSetlist.id);
+
+    if (cloudStatus.connected) {
+      const result = await upsertCloudSetlist(nextSetlist, favoriteSetlistSet.has(nextSetlist.id));
+
+      if (!result.ok) {
+        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+        setCloudMessage('Setlist saved locally. Cloud sync failed.');
+      } else if (result.setlist && result.setlist.id !== nextSetlist.id) {
+        persistSetlists(setlists.map((setlist) => (setlist.id === selectedSetlist.id ? result.setlist as Setlist : setlist)), result.setlist.id);
+        setCloudMessage(`Setlist synced. Local setlist ID was updated to the cloud UUID.${result.skippedItems ? ` Skipped ${result.skippedItems} song${result.skippedItems === 1 ? '' : 's'} without cloud UUIDs.` : ''}`);
+      } else if (result.skippedItems) {
+        setCloudMessage(`Setlist synced, but skipped ${result.skippedItems} song${result.skippedItems === 1 ? '' : 's'} without cloud UUIDs.`);
+      }
+    }
   }
 
   function handleSelectSetlist(id: string) {
@@ -160,7 +341,7 @@ export default function SetlistsPage() {
     setRenameValue(nextSetlist?.name ?? '');
   }
 
-  function handleCreateSetlist() {
+  async function handleCreateSetlist() {
     const now = new Date().toISOString();
     const nextSetlist: Setlist = {
       id: makeId('setlist'),
@@ -172,6 +353,18 @@ export default function SetlistsPage() {
 
     persistSetlists([nextSetlist, ...setlists], nextSetlist.id);
     setNewSetlistName('');
+
+    if (cloudStatus.connected) {
+      const result = await upsertCloudSetlist(nextSetlist);
+
+      if (!result.ok) {
+        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+        setCloudMessage('Setlist created locally. Cloud sync failed.');
+      } else if (result.setlist && result.setlist.id !== nextSetlist.id) {
+        persistSetlists([result.setlist, ...setlists], result.setlist.id);
+        setCloudMessage('Setlist created in cloud. Local setlist ID was updated to the cloud UUID.');
+      }
+    }
   }
 
   function handleRenameSetlist() {
@@ -181,10 +374,10 @@ export default function SetlistsPage() {
       return;
     }
 
-    updateSelectedSetlist((setlist) => ({ ...setlist, name: nextName, updatedAt: new Date().toISOString() }));
+    void updateSelectedSetlist((setlist) => ({ ...setlist, name: nextName, updatedAt: new Date().toISOString() }));
   }
 
-  function handleDeleteSetlist(setlist: Setlist) {
+  async function handleDeleteSetlist(setlist: Setlist) {
     if (!window.confirm(`Delete setlist "${setlist.name}"?`)) {
       return;
     }
@@ -194,9 +387,18 @@ export default function SetlistsPage() {
 
     persistSetlists(nextSetlists, nextSelectedId);
     persistFavoriteSetlists(favoriteSetlistIds.filter((id) => id !== setlist.id));
+
+    if (cloudStatus.connected) {
+      const result = await deleteCloudSetlist(setlist.id);
+
+      if (!result.ok) {
+        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+        setCloudMessage('Setlist deleted locally. Cloud delete failed.');
+      }
+    }
   }
 
-  function handleDuplicateSetlist(setlist: Setlist) {
+  async function handleDuplicateSetlist(setlist: Setlist) {
     const now = new Date().toISOString();
     const duplicatedSetlist: Setlist = {
       ...setlist,
@@ -207,14 +409,36 @@ export default function SetlistsPage() {
     };
 
     persistSetlists([duplicatedSetlist, ...setlists], duplicatedSetlist.id);
+
+    if (cloudStatus.connected) {
+      const result = await upsertCloudSetlist(duplicatedSetlist);
+
+      if (!result.ok) {
+        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+        setCloudMessage('Setlist duplicated locally. Cloud sync failed.');
+      } else if (result.setlist && result.setlist.id !== duplicatedSetlist.id) {
+        persistSetlists([result.setlist, ...setlists], result.setlist.id);
+        setCloudMessage(`Setlist duplicated in cloud. Local setlist ID was updated to the cloud UUID.${result.skippedItems ? ` Skipped ${result.skippedItems} song${result.skippedItems === 1 ? '' : 's'} without cloud UUIDs.` : ''}`);
+      }
+    }
   }
 
-  function handleToggleFavorite(setlist: Setlist) {
+  async function handleToggleFavorite(setlist: Setlist) {
+    const nextIsFavorite = !favoriteSetlistSet.has(setlist.id);
     const nextFavoriteIds = favoriteSetlistSet.has(setlist.id)
       ? favoriteSetlistIds.filter((id) => id !== setlist.id)
       : [...favoriteSetlistIds, setlist.id];
 
     persistFavoriteSetlists(nextFavoriteIds);
+
+    if (cloudStatus.connected) {
+      const result = await updateCloudSetlistFavorite(setlist.id, nextIsFavorite);
+
+      if (!result.ok) {
+        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+        setCloudMessage('Favorite updated locally. Cloud sync failed.');
+      }
+    }
   }
 
   function handleAddSong() {
@@ -222,7 +446,7 @@ export default function SetlistsPage() {
       return;
     }
 
-    updateSelectedSetlist((setlist) => ({
+    void updateSelectedSetlist((setlist) => ({
       ...setlist,
       songIds: [...setlist.songIds, selectedSongId],
       updatedAt: new Date().toISOString(),
@@ -231,7 +455,7 @@ export default function SetlistsPage() {
   }
 
   function handleRemoveSong(index: number) {
-    updateSelectedSetlist((setlist) => ({
+    void updateSelectedSetlist((setlist) => ({
       ...setlist,
       songIds: setlist.songIds.filter((_, songIndex) => songIndex !== index),
       updatedAt: new Date().toISOString(),
@@ -239,7 +463,7 @@ export default function SetlistsPage() {
   }
 
   function handleMoveSong(index: number, direction: -1 | 1) {
-    updateSelectedSetlist((setlist) => {
+    void updateSelectedSetlist((setlist) => {
       const nextIndex = index + direction;
 
       if (nextIndex < 0 || nextIndex >= setlist.songIds.length) {
@@ -271,6 +495,35 @@ export default function SetlistsPage() {
     }
   }
 
+  async function handleShareSetlist() {
+    if (!selectedSetlist) {
+      return;
+    }
+
+    const sharedCharts = selectedSetlist.songIds
+      .map((songId) => chartMap.get(songId))
+      .filter((chart): chart is SavedChart => Boolean(chart));
+    const payload: SharedSetlistData = {
+      setlist: selectedSetlist,
+      charts: sharedCharts,
+      sharedAt: new Date().toISOString(),
+    };
+    const url = `${window.location.origin}${window.location.pathname}?shareSetlist=${encodeURIComponent(JSON.stringify(payload))}`;
+
+    setShareUrl(url);
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareMessage('Setlist share link copied.');
+    } catch {
+      setShareMessage('Setlist share link ready.');
+    }
+  }
+
+  if (sharedSetlistData) {
+    return <SetlistReadOnlyView data={sharedSetlistData} />;
+  }
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_28%),linear-gradient(180deg,_#1c1917_0%,_#0c0a09_48%,_#020617_100%)] px-4 py-8 text-stone-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
       <style jsx global>{`
@@ -297,6 +550,10 @@ export default function SetlistsPage() {
           <div className="space-y-2">
             <p className="text-sm uppercase tracking-[0.3em] text-amber-300/80">Nashville Number System</p>
             <h1 className="text-3xl font-semibold text-white sm:text-4xl">Setlists</h1>
+            <p className={`inline-flex rounded-xl border px-3 py-2 text-sm ${cloudStatus.connected ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-100'}`}>
+              {cloudStatus.message}
+            </p>
+            {cloudMessage ? <p className="text-sm text-stone-300">{cloudMessage}</p> : null}
           </div>
           <nav className="flex flex-wrap gap-2">
             <Link href="/library" className={SECONDARY_BUTTON_CLASS}>
@@ -393,6 +650,9 @@ export default function SetlistsPage() {
                       </div>
 
                       <div className="flex flex-wrap gap-2">
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareSetlist}>
+                          Share Link
+                        </button>
                         <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleDuplicateSetlist(selectedSetlist)}>
                           Duplicate
                         </button>
@@ -404,6 +664,17 @@ export default function SetlistsPage() {
                         </button>
                       </div>
                     </div>
+
+                    {shareMessage || shareUrl ? (
+                      <section className="rounded-2xl border border-amber-950/25 bg-stone-950/50 p-4">
+                        {shareMessage ? <p className="text-sm text-stone-300">{shareMessage}</p> : null}
+                        {shareUrl ? (
+                          <a href={shareUrl} className="mt-2 block break-all text-sm text-amber-200">
+                            {shareUrl}
+                          </a>
+                        ) : null}
+                      </section>
+                    ) : null}
 
                     <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
                       <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">

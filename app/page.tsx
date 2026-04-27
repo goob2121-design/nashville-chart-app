@@ -2,6 +2,16 @@
 
 import Link from 'next/link';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  dedupeCharts,
+  deleteCloudChart,
+  fetchCloudCharts,
+  getInitialCloudStatus,
+  normalizeChartKey,
+  upsertCloudChart,
+  type CloudStatus,
+  type SavedChart as CloudSavedChart,
+} from './lib/cloudSync';
 
 const MAJOR_KEYS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
 const NOTE_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'] as const;
@@ -50,6 +60,8 @@ type SavedChart = ChartSnapshot & {
 };
 
 const STORAGE_KEY = 'nashville-chart-builder:saved-charts';
+const FAVORITES_STORAGE_KEY = 'nashville-chart-builder:favorite-charts';
+const SETLISTS_STORAGE_KEY = 'nashville-chart-builder:setlists';
 const SYMBOL_TOOLBAR_STORAGE_KEY = 'nashville-chart-builder:symbol-toolbar-expanded';
 const SECTION_OPEN_STORAGE_KEY = 'nashville-chart-builder:section-open-state';
 
@@ -797,6 +809,31 @@ function buildSnapshot(values: {
   };
 }
 
+function normalizeSavedChart(chart: CloudSavedChart): SavedChart {
+  return {
+    artist: chart.artist ?? '',
+    capo: chart.capo ?? '',
+    chartMode: chart.chartMode === 'strict' ? 'strict' : 'simple',
+    chordChart: chart.chordChart ?? '',
+    feel: chart.feel ?? '',
+    id: chart.id,
+    key: MAJOR_KEYS.includes(chart.key as KeyName) ? (chart.key as KeyName) : 'C',
+    nashvilleChart: chart.nashvilleChart ?? '',
+    notes: chart.notes ?? '',
+    savedAt: chart.savedAt ?? new Date().toISOString(),
+    tempo: chart.tempo ?? '',
+    timeSignature: TIME_SIGNATURES.includes(chart.timeSignature as TimeSignature) ? (chart.timeSignature as TimeSignature) : '4/4',
+    title: chart.title ?? '',
+  };
+}
+
+function savedChartLabel(chart: SavedChart) {
+  const title = chart.title?.trim() || 'Untitled Chart';
+  const artist = chart.artist?.trim();
+
+  return artist ? `${title} — ${artist}` : title;
+}
+
 function ChartLines({ text }: { text: string }) {
   return (
     <>
@@ -822,7 +859,7 @@ function ShareView({
   onPerformanceMode,
 }: {
   chart: ChartSnapshot;
-  onExit: () => void;
+  onExit?: () => void;
   onPerformanceMode: () => void;
 }) {
   const readOnlyChart = chart.nashvilleChart.trim()
@@ -877,13 +914,15 @@ function ShareView({
             >
               Performance Mode
             </button>
-            <button
-              type="button"
-              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
-              onClick={onExit}
-            >
-              Open Editor
-            </button>
+            {onExit ? (
+              <button
+                type="button"
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+                onClick={onExit}
+              >
+                Open Editor
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -992,6 +1031,9 @@ export default function Page() {
   const [hasMounted, setHasMounted] = useState(false);
   const [savedCharts, setSavedCharts] = useState<SavedChart[]>([]);
   const [selectedSavedChartId, setSelectedSavedChartId] = useState('');
+  const [currentChartId, setCurrentChartId] = useState<string | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus>(getInitialCloudStatus());
+  const [cloudMessage, setCloudMessage] = useState('');
   const [smartPasteMessage, setSmartPasteMessage] = useState('');
   const [isShareView, setIsShareView] = useState(false);
   const [performanceMode, setPerformanceMode] = useState(false);
@@ -1005,13 +1047,15 @@ export default function Page() {
       setHasMounted(true);
       let parsedSavedCharts: SavedChart[] = [];
 
+      const loadSavedCharts = async () => {
       try {
         const saved = window.localStorage.getItem(STORAGE_KEY);
         const storedToolbarPreference = window.localStorage.getItem(SYMBOL_TOOLBAR_STORAGE_KEY);
         const storedSectionState = window.localStorage.getItem(SECTION_OPEN_STORAGE_KEY);
 
-        parsedSavedCharts = saved ? (JSON.parse(saved) as SavedChart[]) : [];
+        parsedSavedCharts = dedupeCharts(saved ? (JSON.parse(saved) as SavedChart[]) : []);
         setSavedCharts(parsedSavedCharts);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(parsedSavedCharts));
         setSelectedSavedChartId(parsedSavedCharts[0]?.id ?? '');
 
         if (storedToolbarPreference === 'true' || storedToolbarPreference === 'false') {
@@ -1024,11 +1068,29 @@ export default function Page() {
           const parsedSectionState = JSON.parse(storedSectionState) as Partial<SectionOpenState>;
           setSectionOpen({ ...DEFAULT_SECTION_OPEN_STATE, ...parsedSectionState });
         }
+
+        if (getInitialCloudStatus().connected) {
+          const cloudResult = await fetchCloudCharts();
+
+          if (cloudResult.error) {
+            setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${cloudResult.error}` });
+            setCloudMessage('Supabase is unavailable right now. Using local saved charts.');
+          } else {
+            const cloudCharts = dedupeCharts(cloudResult.charts.map(normalizeSavedChart));
+            parsedSavedCharts = cloudCharts;
+            setSavedCharts(cloudCharts);
+            setSelectedSavedChartId(cloudCharts[0]?.id ?? '');
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudCharts));
+            setCloudStatus({ connected: true, label: 'Connected', message: 'Cloud Sync: Connected' });
+            setCloudMessage('');
+          }
+        }
       } catch {
         setSavedCharts([]);
         setSelectedSavedChartId('');
         setSymbolsExpanded(false);
         setSectionOpen(DEFAULT_SECTION_OPEN_STATE);
+        setCloudStatus({ connected: false, label: 'Local Only', message: 'Cloud Sync: Local Only. Local data could not be loaded.' });
       }
 
       const params = new URLSearchParams(window.location.search);
@@ -1041,6 +1103,7 @@ export default function Page() {
         if (chartToOpen) {
           applySnapshot(chartToOpen);
           setSelectedSavedChartId(chartToOpen.id);
+          setCurrentChartId(chartToOpen.id);
         }
 
         window.history.replaceState(null, '', window.location.pathname);
@@ -1058,7 +1121,11 @@ export default function Page() {
       }
 
       applySnapshot(decoded);
+      setCurrentChartId(null);
       setIsShareView(true);
+      };
+
+      void loadSavedCharts();
     }, 0);
 
     return () => window.clearTimeout(mountTimer);
@@ -1114,8 +1181,38 @@ export default function Page() {
   }
 
   function persistSavedCharts(nextCharts: SavedChart[]) {
-    setSavedCharts(nextCharts);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextCharts));
+    const dedupedCharts = dedupeCharts(nextCharts);
+    setSavedCharts(dedupedCharts);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dedupedCharts));
+  }
+
+  function replaceLocalChartReferences(oldId: string, nextId: string) {
+    if (!oldId || oldId === nextId) {
+      return;
+    }
+
+    try {
+      const storedFavorites = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
+      const favoriteIds = storedFavorites ? (JSON.parse(storedFavorites) as string[]) : [];
+      window.localStorage.setItem(
+        FAVORITES_STORAGE_KEY,
+        JSON.stringify(favoriteIds.map((id) => (id === oldId ? nextId : id)))
+      );
+
+      const storedSetlists = window.localStorage.getItem(SETLISTS_STORAGE_KEY);
+      const setlists = storedSetlists ? (JSON.parse(storedSetlists) as Array<{ songIds: string[] }>) : [];
+      window.localStorage.setItem(
+        SETLISTS_STORAGE_KEY,
+        JSON.stringify(
+          setlists.map((setlist) => ({
+            ...setlist,
+            songIds: setlist.songIds.map((songId) => (songId === oldId ? nextId : songId)),
+          }))
+        )
+      );
+    } catch {
+      setCloudMessage('Chart saved, but some local favorite/setlist references could not be updated.');
+    }
   }
 
   function handleToggleSymbols() {
@@ -1230,32 +1327,54 @@ export default function Page() {
     }
   }
 
-  function handleSaveChart() {
+  async function handleSaveChart() {
     const snapshot = currentSnapshot();
-    const id = snapshot.title.trim() || `Untitled ${new Date().toLocaleString()}`;
+    const now = new Date().toISOString();
+    const existingById = currentChartId ? savedCharts.find((chart) => chart.id === currentChartId) : null;
+    const existingByChartKey = savedCharts.find((chart) => normalizeChartKey(chart) === normalizeChartKey(snapshot));
+    const existingChart = existingById ?? existingByChartKey ?? null;
+    const id = existingChart?.id ?? currentChartId ?? (snapshot.title.trim() || `Untitled ${new Date().toLocaleString()}`);
+    const savedChart = { ...snapshot, id, savedAt: now };
     const exists = savedCharts.some((chart) => chart.id === id);
-
-    if (exists && !window.confirm(`Overwrite saved chart "${id}"?`)) {
-      return;
-    }
-
-    const nextCharts = [
-      { ...snapshot, id, savedAt: new Date().toISOString() },
-      ...savedCharts.filter((chart) => chart.id !== id),
-    ];
+    const nextCharts = exists
+      ? savedCharts.map((chart) => (chart.id === id ? savedChart : chart))
+      : [savedChart, ...savedCharts];
 
     persistSavedCharts(nextCharts);
     setSelectedSavedChartId(id);
+    setCurrentChartId(id);
+
+    if (cloudStatus.connected) {
+      const result = await upsertCloudChart(savedChart);
+
+      if (!result.ok) {
+        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+        setCloudMessage('Saved locally. Cloud sync failed, so localStorage is still your backup.');
+      } else if (result.chart && result.chart.id !== savedChart.id) {
+        const cloudSavedChart = normalizeSavedChart(result.chart);
+        const cloudCharts = nextCharts.some((chart) => chart.id === savedChart.id)
+          ? nextCharts.map((chart) => (chart.id === savedChart.id ? cloudSavedChart : chart))
+          : [cloudSavedChart, ...nextCharts];
+        persistSavedCharts(cloudCharts);
+        setSelectedSavedChartId(cloudSavedChart.id);
+        setCurrentChartId(cloudSavedChart.id);
+        replaceLocalChartReferences(savedChart.id, cloudSavedChart.id);
+        setCloudMessage('Saved locally and synced to cloud. Local chart ID was updated to the cloud UUID.');
+      } else {
+        setCloudMessage('Saved locally and synced to cloud.');
+      }
+    }
   }
 
   function handleLoadChart() {
     const chart = savedCharts.find((item) => item.id === selectedSavedChartId);
     if (chart) {
       applySnapshot(chart);
+      setCurrentChartId(chart.id);
     }
   }
 
-  function handleDeleteChart() {
+  async function handleDeleteChart() {
     const chart = savedCharts.find((item) => item.id === selectedSavedChartId);
 
     if (!chart || !window.confirm(`Delete saved chart "${chart.id}"?`)) {
@@ -1265,6 +1384,16 @@ export default function Page() {
     const nextCharts = savedCharts.filter((item) => item.id !== chart.id);
     persistSavedCharts(nextCharts);
     setSelectedSavedChartId(nextCharts[0]?.id ?? '');
+    setCurrentChartId((currentId) => (currentId === chart.id ? null : currentId));
+
+    if (cloudStatus.connected) {
+      const result = await deleteCloudChart(chart.id);
+
+      if (!result.ok) {
+        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+        setCloudMessage('Deleted locally. Cloud delete failed.');
+      }
+    }
   }
 
   function handleInsertSymbol(symbol: string) {
@@ -1308,10 +1437,6 @@ export default function Page() {
     setInput(replace ? template : `${normalizeChartInput(input)}\n\n${template}`);
   }
 
-  function handleExitShareView() {
-    window.location.href = window.location.pathname;
-  }
-
   const performanceOverlay = performanceMode ? (
     <div className="no-print fixed inset-0 z-50 overflow-y-auto bg-black px-4 py-6 text-white">
       <div className="mx-auto flex max-w-5xl flex-col gap-4">
@@ -1343,7 +1468,7 @@ export default function Page() {
     return (
       <>
         {performanceOverlay}
-        <ShareView chart={currentSnapshot()} onExit={handleExitShareView} onPerformanceMode={() => setPerformanceMode(true)} />
+        <ShareView chart={currentSnapshot()} onPerformanceMode={() => setPerformanceMode(true)} />
       </>
     );
   }
@@ -1398,6 +1523,10 @@ export default function Page() {
               <p className="max-w-3xl text-sm leading-6 text-stone-300">
                 Build bluegrass-friendly charts with a focused Quick Mode for fast song setup, or switch to Pro Mode when you need the full charting toolkit.
               </p>
+              <p className={`inline-flex rounded-xl border px-3 py-2 text-sm ${cloudStatus.connected ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-100'}`}>
+                {cloudStatus.message}
+              </p>
+              {cloudMessage ? <p className="text-sm text-stone-300">{cloudMessage}</p> : null}
             </div>
 
             <section className={`${PANEL_CLASS} p-4 sm:p-5`}>
@@ -1558,6 +1687,9 @@ export default function Page() {
                   <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={handleConvert}>
                     Convert
                   </button>
+                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>
+                    Save Chart
+                  </button>
                 </div>
 
                 <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
@@ -1586,9 +1718,6 @@ export default function Page() {
                   onToggle={() => handleToggleSection('library')}
                 >
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>
-                      Save Chart
-                    </button>
                     <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareView}>
                       {shareLabel}
                     </button>
@@ -1621,7 +1750,7 @@ export default function Page() {
                         <option value="">Select a saved chart</option>
                         {savedCharts.map((chart) => (
                           <option key={chart.id} value={chart.id}>
-                            {chart.id}
+                            {savedChartLabel(chart)}
                           </option>
                         ))}
                       </select>
