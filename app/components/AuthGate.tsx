@@ -3,7 +3,7 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 
 const AUTH_STORAGE_KEY = 'pinnacle-chart-auth';
-const LOGO_SRC = '/pinnacle-recording-studio-logo.png';
+const LOGO_SRC = '/pinnacle-logo.png';
 
 export function BrandHeaderTitle({ subtitle }: { subtitle?: string }) {
   return (
