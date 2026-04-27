@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { AuthGate, BrandHeaderTitle } from '../components/AuthGate';
 import {
   deleteCloudSetlist,
   fetchCloudCharts,
@@ -525,6 +526,7 @@ export default function SetlistsPage() {
   }
 
   return (
+    <AuthGate>
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_28%),linear-gradient(180deg,_#1c1917_0%,_#0c0a09_48%,_#020617_100%)] px-4 py-8 text-stone-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
       <style jsx global>{`
         .print-only {
@@ -548,8 +550,7 @@ export default function SetlistsPage() {
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 print:max-w-none print:gap-4">
         <header className="no-print flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
-            <p className="text-sm uppercase tracking-[0.3em] text-amber-300/80">Nashville Number System</p>
-            <h1 className="text-3xl font-semibold text-white sm:text-4xl">Setlists</h1>
+            <BrandHeaderTitle />
             <p className={`inline-flex rounded-xl border px-3 py-2 text-sm ${cloudStatus.connected ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-100'}`}>
               {cloudStatus.message}
             </p>
@@ -560,7 +561,7 @@ export default function SetlistsPage() {
               Song Library
             </Link>
             <Link href="/" className={SECONDARY_BUTTON_CLASS}>
-              Back to Builder
+              Back to Chart System
             </Link>
           </nav>
         </header>
@@ -802,5 +803,6 @@ export default function SetlistsPage() {
         )}
       </div>
     </main>
+    </AuthGate>
   );
 }

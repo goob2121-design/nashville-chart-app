@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { AuthGate, BrandHeaderTitle } from './components/AuthGate';
 import {
   dedupeCharts,
   deleteCloudChart,
@@ -37,6 +38,7 @@ type KeyName = (typeof MAJOR_KEYS)[number];
 type TimeSignature = (typeof TIME_SIGNATURES)[number];
 type MeasureGridStyle = 'off' | 'simple-bars' | 'beat-dots';
 type UiMode = 'quick' | 'pro';
+type ActiveTextarea = 'input' | 'output';
 type SectionId = 'songSetup' | 'chartBuilder' | 'output' | 'advanced' | 'library';
 type SectionOpenState = Record<SectionId, boolean>;
 
@@ -173,6 +175,77 @@ const SYMBOL_BUTTONS = [
   { label: '/', value: '/' },
   { label: '-', value: '-' },
 ] as const;
+
+const SYMBOL_CATEGORIES = {
+  Common: [
+    { label: '◇', value: '◇' },
+    { label: '^', value: '^' },
+    { label: '•', value: '•' },
+    { label: '>', value: '>' },
+    { label: '<', value: '<' },
+    { label: '%', value: '%' },
+    { label: '|', value: '|' },
+    { label: '||', value: '||' },
+    { label: '/', value: '/' },
+    { label: '-', value: '-' },
+    { label: 'N.C.', value: '[N.C.]' },
+  ],
+  Sections: [
+    { label: '[Intro]', value: '[Intro]' },
+    { label: '[V1]', value: '[V1]' },
+    { label: '[V2]', value: '[V2]' },
+    { label: '[V3]', value: '[V3]' },
+    { label: '[Ch]', value: '[Ch]' },
+    { label: '[Br]', value: '[Br]' },
+    { label: '[Solo]', value: '[Solo]' },
+    { label: '[Break]', value: '[Break]' },
+    { label: '[Tag]', value: '[Tag]' },
+    { label: '[Outro]', value: '[Outro]' },
+    { label: '[A Part]', value: '[A Part]' },
+    { label: '[B Part]', value: '[B Part]' },
+  ],
+  Repeats: [
+    { label: '[x2]', value: '[x2]' },
+    { label: '[x3]', value: '[x3]' },
+    { label: '||:', value: '||:' },
+    { label: ':||', value: ':||' },
+    { label: '[Repeat Last Line]', value: '[Repeat Last Line]' },
+    { label: '[Same as Verse 1]', value: '[Same as Verse 1]' },
+    { label: '[Same as Chorus]', value: '[Same as Chorus]' },
+    { label: '[V2 = V1]', value: '[V2 = V1]' },
+    { label: '[Ch2 = Ch1]', value: '[Ch2 = Ch1]' },
+  ],
+  Endings: [
+    { label: '[Tag Last Line Chorus]', value: '[Tag Last Line Chorus]' },
+    { label: '[Tag Last Line Chorus x2]', value: '[Tag Last Line Chorus x2]' },
+    { label: '[Outro = Chorus Tag]', value: '[Outro = Chorus Tag]' },
+    { label: '[Cold End]', value: '[Cold End]' },
+    { label: '[Hold Last 1]', value: '[Hold Last 1]' },
+    { label: '[Run Out]', value: '[Run Out]' },
+    { label: '[Repeat to End]', value: '[Repeat to End]' },
+  ],
+  Bluegrass: [
+    { label: '[Banjo Kickoff]', value: '[Banjo Kickoff]' },
+    { label: '[Fiddle Kickoff]', value: '[Fiddle Kickoff]' },
+    { label: '[Dobro Solo]', value: '[Dobro Solo]' },
+    { label: '[Mando Chop In]', value: '[Mando Chop In]' },
+    { label: '[Harmony In]', value: '[Harmony In]' },
+    { label: '[Turnaround]', value: '[Turnaround]' },
+    { label: '[Walk Up]', value: '[Walk Up]' },
+    { label: '[Kick on 5]', value: '[Kick on 5]' },
+    { label: '[Stop on 1]', value: '[Stop on 1]' },
+  ],
+  Rhythm: [
+    { label: '.', value: '.' },
+    { label: '/', value: '/' },
+    { label: '1...', value: '1...' },
+    { label: '1..4', value: '1..4' },
+    { label: '1.4.', value: '1.4.' },
+    { label: '| 1..4 | 1 | 4 | 1 |', value: '| 1..4 | 1 | 4 | 1 |' },
+  ],
+} as const;
+
+type SymbolCategory = keyof typeof SYMBOL_CATEGORIES;
 
 const TEMPLATE_PRESETS: Record<string, string> = {
   'Standard Song': `[Verse]
@@ -1012,6 +1085,7 @@ function SectionCard({
 }
 
 export default function Page() {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLTextAreaElement>(null);
   const [songTitle, setSongTitle] = useState(SAMPLE_CHART.title);
   const [artist, setArtist] = useState(SAMPLE_CHART.artist);
@@ -1039,6 +1113,10 @@ export default function Page() {
   const [performanceMode, setPerformanceMode] = useState(false);
   const [uiMode, setUiMode] = useState<UiMode>('quick');
   const [symbolsExpanded, setSymbolsExpanded] = useState(false);
+  const [selectedSymbolCategory, setSelectedSymbolCategory] = useState<SymbolCategory>('Common');
+  const [isSymbolHelpOpen, setIsSymbolHelpOpen] = useState(false);
+  const [templatesExpanded, setTemplatesExpanded] = useState(false);
+  const [activeTextarea, setActiveTextarea] = useState<ActiveTextarea>('output');
   const [sectionOpen, setSectionOpen] = useState<SectionOpenState>(DEFAULT_SECTION_OPEN_STATE);
   const [measureGridStyle, setMeasureGridStyle] = useState<MeasureGridStyle>('off');
 
@@ -1397,7 +1475,10 @@ export default function Page() {
   }
 
   function handleInsertSymbol(symbol: string) {
-    const textarea = outputRef.current;
+    const shouldUseInput = activeTextarea === 'input';
+    const textarea = shouldUseInput ? inputRef.current : outputRef.current ?? inputRef.current;
+    const currentText = shouldUseInput ? input : output;
+    const setText = shouldUseInput ? setInput : setOutput;
 
     if (!textarea) {
       setOutput((current) => `${current}${symbol}`);
@@ -1406,13 +1487,13 @@ export default function Page() {
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const nextOutput = output.slice(0, start) + symbol + output.slice(end);
+    const nextText = currentText.slice(0, start) + symbol + currentText.slice(end);
     const nextCaret = symbol === '( )' ? start + 1 : start + symbol.length;
 
-    setOutput(nextOutput);
+    setText(nextText);
 
     window.requestAnimationFrame(() => {
-      const nextTextarea = outputRef.current;
+      const nextTextarea = shouldUseInput ? inputRef.current : outputRef.current;
       if (!nextTextarea) {
         return;
       }
@@ -1474,7 +1555,7 @@ export default function Page() {
   }
 
   return (
-    <>
+    <AuthGate>
       <style jsx global>{`
         .print-only {
           display: none;
@@ -1504,13 +1585,46 @@ export default function Page() {
 
       {performanceOverlay}
 
+      {isSymbolHelpOpen ? (
+        <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+          <section className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-amber-950/40 bg-stone-950 p-5 text-stone-100 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Symbol Help</h2>
+                <p className="mt-1 text-sm text-stone-400">Quick reference for Nashville chart marks and rhythm shorthand.</p>
+              </div>
+              <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => setIsSymbolHelpOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 text-sm leading-6 text-stone-300 sm:grid-cols-2">
+              <p><span className="font-semibold text-stone-100">◇</span> = hold or ring chord</p>
+              <p><span className="font-semibold text-stone-100">^</span> = stop or choke</p>
+              <p><span className="font-semibold text-stone-100">&gt; / &lt;</span> = push or anticipation</p>
+              <p><span className="font-semibold text-stone-100">%</span> = repeat previous bar</p>
+              <p><span className="font-semibold text-stone-100">||: / :||</span> = repeat section</p>
+              <p><span className="font-semibold text-stone-100">|</span> = bar line</p>
+              <p><span className="font-semibold text-stone-100">/</span> = slash chord or bass note</p>
+              <p><span className="font-semibold text-stone-100">- or m</span> = minor chord</p>
+              <p><span className="font-semibold text-stone-100">[Intro]</span> = beginning section</p>
+              <p><span className="font-semibold text-stone-100">[Tag]</span> = repeat ending or last line</p>
+              <p><span className="font-semibold text-stone-100">[Turnaround]</span> = short phrase leading around</p>
+              <p><span className="font-semibold text-stone-100">[A Part] / [B Part]</span> = fiddle tune sections</p>
+              <p><span className="font-semibold text-stone-100">1...</span> = whole measure of 1</p>
+              <p><span className="font-semibold text-stone-100">1..4</span> = hold 1 for three beats, 4 on beat 4</p>
+              <p><span className="font-semibold text-stone-100">1.4.</span> = two beats of 1, two beats of 4</p>
+              <p><span className="font-semibold text-stone-100">.</span> = hold previous chord for one beat</p>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_28%),linear-gradient(180deg,_#1c1917_0%,_#0c0a09_48%,_#020617_100%)] px-4 py-8 text-stone-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 print:max-w-none print:gap-4">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 print:max-w-none print:gap-4">
           <div className="no-print space-y-4">
             <div className="space-y-2">
-              <p className="text-sm uppercase tracking-[0.3em] text-amber-300/80">Nashville Number System</p>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <h1 className="text-3xl font-semibold text-white sm:text-4xl">Chart Builder</h1>
+                <BrandHeaderTitle />
                 <nav className="flex flex-wrap gap-2">
                   <Link href="/library" className={SECONDARY_BUTTON_CLASS}>
                     Song Library
@@ -1555,8 +1669,8 @@ export default function Page() {
             </section>
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr] print:grid-cols-1">
-            <section className={`no-print space-y-5 ${PANEL_CLASS}`}>
+          <div className={`grid gap-6 print:grid-cols-1 ${isQuickMode ? 'grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_380px]'}`}>
+            <section className={`no-print order-1 space-y-5 ${PANEL_CLASS}`}>
               <SectionCard
                 title="Song Setup"
                 description="Set the song title, artist, key, and other performance basics."
@@ -1646,11 +1760,24 @@ export default function Page() {
 
 
               <SectionCard
-                title="Chart Builder"
+                title="Chart Editor"
                 description="Paste or type the chord chart, then clean it up, grid it, and convert it."
                 isOpen={sectionOpen.chartBuilder}
                 onToggle={() => handleToggleSection('chartBuilder')}
               >
+                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                  Chord Input
+                  <textarea
+                    ref={inputRef}
+                    className={`${INPUT_CLASS} min-h-72 font-mono text-sm leading-7 sm:min-h-80`}
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onFocus={() => setActiveTextarea('input')}
+                    onBlur={() => setInput(normalizeChartInput(input))}
+                    spellCheck={false}
+                  />
+                </label>
+
                 <div className="flex flex-col gap-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4 sm:flex-row sm:items-end sm:justify-between">
                   <label className="flex flex-1 flex-col gap-2 text-sm font-medium text-zinc-200">
                     Measure Grid
@@ -1692,22 +1819,56 @@ export default function Page() {
                   </button>
                 </div>
 
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Chord Input
-                  <textarea
-                    className={`${INPUT_CLASS} min-h-72 font-mono text-sm leading-7 sm:min-h-80`}
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                    onBlur={() => setInput(normalizeChartInput(input))}
-                    spellCheck={false}
-                  />
-                </label>
-
                 {smartPasteMessage ? <p className="text-sm text-zinc-300">{smartPasteMessage}</p> : null}
 
                 <p className="text-xs leading-5 text-stone-400">
                   Grid mode makes each measure/bar easier to see. A dot means hold the previous chord for one beat.
                 </p>
+              </SectionCard>
+
+              <SectionCard
+                title="Nashville Output"
+                description="Edit the final number chart, then copy it, print it, or take it into performance mode."
+                isOpen={sectionOpen.output}
+                onToggle={() => handleToggleSection('output')}
+                className="no-print"
+              >
+                <textarea
+                  ref={outputRef}
+                  className="no-print min-h-[28rem] w-full resize-none overflow-hidden rounded-2xl border border-emerald-900/40 bg-stone-950/85 px-4 py-4 font-mono text-lg leading-8 text-emerald-300 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                  value={output}
+                  onChange={(event) => setOutput(event.target.value)}
+                  onFocus={() => setActiveTextarea('output')}
+                  spellCheck={false}
+                />
+
+                {!isQuickMode ? (
+                  <div className="flex flex-col gap-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label className="flex flex-1 flex-col gap-2 text-sm font-medium text-zinc-200">
+                      Output Measure Grid
+                      <select className={INPUT_CLASS} value={measureGridStyle} onChange={(event) => setMeasureGridStyle(event.target.value as MeasureGridStyle)}>
+                        <option value="off">Off</option>
+                        <option value="simple-bars">Simple Bars</option>
+                        <option value="beat-dots">Beat Dots</option>
+                      </select>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAddOutputMeasureGrid}>
+                        Apply Grid
+                      </button>
+                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRemoveOutputMeasureGrid}>
+                        Remove Grid
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>Save Chart</button>
+                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCopyChart}>{copyLabel}</button>
+                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
+                  <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>Print Chart</button>
+                </div>
               </SectionCard>
 
               {!isQuickMode ? (
@@ -1764,7 +1925,7 @@ export default function Page() {
               ) : null}
             </section>
 
-            <section className={`${PANEL_CLASS} print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
+            <section className={`order-2 ${PANEL_CLASS} ${isQuickMode ? '' : 'xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto'} print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
               <div className="space-y-3 border-b border-amber-950/30 pb-4 print:hidden print:border-zinc-300">
                 <h2 className="text-2xl font-semibold text-white print:text-black">{songTitle || 'Untitled Song'}</h2>
                 <div className="grid gap-2 text-sm text-stone-300 sm:grid-cols-2 lg:grid-cols-3 print:text-black">
@@ -1803,152 +1964,111 @@ export default function Page() {
                   </div>
 
                   {sectionOpen.advanced ? <div className="mt-4 space-y-4">
-                  <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
-                    <h4 className="text-sm font-medium text-zinc-200">Chart Style</h4>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-950/30 bg-stone-950/45 px-4 py-3 text-sm text-zinc-200">
-                        <input type="radio" name="chart-mode" value="simple" checked={chartMode === 'simple'} onChange={() => setChartMode('simple')} className="mt-1" />
-                        <span>Simple Bluegrass Mode</span>
-                      </label>
-                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-950/30 bg-stone-950/45 px-4 py-3 text-sm text-zinc-200">
-                        <input type="radio" name="chart-mode" value="strict" checked={chartMode === 'strict'} onChange={() => setChartMode('strict')} className="mt-1" />
-                        <span>Strict Nashville Mode</span>
-                      </label>
-                    </div>
-                    <p className="text-sm leading-6 text-zinc-400">
-                      Simple mode is designed for quick band charts when players type chords by letter names. Strict mode follows chromatic Nashville theory.
-                    </p>
-                  </section>
-
-                  <section className="mb-4 space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h4 className="text-sm font-medium text-zinc-200">Template Presets</h4>
-                        <p className="mt-1 text-xs text-zinc-400">Replace or append common bluegrass forms.</p>
-                      </div>
-                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleTransposeChart}>
-                        Transpose Chart
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.keys(TEMPLATE_PRESETS).map((name) => (
-                        <button key={name} type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleInsertTemplate(name)}>
-                          {name}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-
-                  <label className="mb-4 flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                    Notes
-                    <textarea
-                      className={`${INPUT_CLASS} min-h-24 text-sm leading-6`}
-                      value={notes}
-                      onChange={(event) => setNotes(event.target.value)}
-                      placeholder="Arrangement notes, solos, endings, or reminders for the band."
-                    />
-                  </label>
-
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                      <h4 className="text-sm font-medium text-zinc-200">Symbols & Tags</h4>
-                      <p className="text-xs text-stone-400">Insert common Nashville chart marks at the cursor position.</p>
-                    </div>
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleToggleSymbols}>
-                      {symbolsExpanded ? 'Hide Symbols' : 'Show Symbols'}
-                    </button>
-                  </div>
-                  {symbolsExpanded ? (
-                    <>
-                      <div className="flex flex-wrap gap-2">
-                        {SYMBOL_BUTTONS.map((symbol) => (
-                          <button
-                            key={`${symbol.label}-${symbol.value}`}
-                            type="button"
-                            className={`${SECONDARY_BUTTON_CLASS} font-mono`}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => handleInsertSymbol(symbol.value)}
-                          >
-                            {symbol.label}
-                          </button>
-                        ))}
-                      </div>
-                      <section className="rounded-2xl border border-amber-950/20 bg-black/10 p-4 text-sm text-stone-300">
-                        <h4 className="mb-3 text-sm font-medium text-stone-100">Symbol Help</h4>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <p>◇ = hold/ring chord</p>
-                          <p>^ = stop/choke</p>
-                          <p>&gt; or &lt; = push/anticipation</p>
-                          <p>% = repeat previous bar</p>
-                          <p>||: and :|| = repeat section</p>
-                          <p>| = bar line</p>
-                          <p>/ = slash chord or bass note</p>
-                          <p>- or m = minor chord</p>
-                          <p>[Intro] = beginning section</p>
-                          <p>[Tag] = repeat the ending/last line</p>
-                          <p>[Turnaround] = short phrase leading back around</p>
-                          <p>[Break] = instrumental break</p>
-                          <p>[A Part] / [B Part] = fiddle tune sections</p>
+                    <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-medium text-zinc-200">Symbols & Tags</h4>
+                          <p className="text-xs text-stone-400">Insert into the last focused chart field.</p>
                         </div>
-                      </section>
-                    </>
-                  ) : null}
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleToggleSymbols}>
+                          {symbolsExpanded ? 'Hide Symbols' : 'Show Symbols'}
+                        </button>
+                      </div>
+                      {symbolsExpanded ? (
+                        <>
+                          <div className="flex gap-2 overflow-x-auto pb-1">
+                            {Object.keys(SYMBOL_CATEGORIES).map((category) => (
+                              <button
+                                key={category}
+                                type="button"
+                                className={`shrink-0 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                                  selectedSymbolCategory === category
+                                    ? 'bg-amber-400 text-stone-950'
+                                    : 'border border-amber-900/40 bg-stone-950/40 text-stone-100 hover:bg-stone-900/80'
+                                }`}
+                                onClick={() => setSelectedSymbolCategory(category as SymbolCategory)}
+                              >
+                                {category}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2">
+                            {SYMBOL_CATEGORIES[selectedSymbolCategory].map((symbol) => (
+                              <button
+                                key={`${symbol.label}-${symbol.value}`}
+                                type="button"
+                                className={`${SECONDARY_BUTTON_CLASS} min-h-10 px-2 py-2 font-mono text-xs`}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => handleInsertSymbol(symbol.value)}
+                              >
+                                {symbol.label}
+                              </button>
+                            ))}
+                          </div>
+                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => setIsSymbolHelpOpen(true)}>
+                            Symbol Help
+                          </button>
+                        </>
+                      ) : null}
+                    </section>
 
-                  <section className="mt-4 rounded-2xl border border-amber-950/20 bg-black/10 p-4 text-sm text-stone-300">
-                    <h4 className="mb-3 text-sm font-medium text-stone-100">Rhythm Help</h4>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <p><span className="font-semibold text-stone-100">1..4</span> = hold 1 for three beats, then 4 on beat 4</p>
-                      <p><span className="font-semibold text-stone-100">1...</span> = whole measure of 1</p>
-                      <p><span className="font-semibold text-stone-100">1.4.</span> = two beats of 1, two beats of 4</p>
-                      <p><span className="font-semibold text-stone-100">1451</span> = one beat each</p>
-                      <p><span className="font-semibold text-stone-100">.</span> = hold previous chord for one beat</p>
-                      <p><span className="font-semibold text-stone-100">|</span> = optional bar separator</p>
-                    </div>
-                  </section>
+                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                      Notes
+                      <textarea
+                        className={`${INPUT_CLASS} min-h-24 text-sm leading-6`}
+                        value={notes}
+                        onChange={(event) => setNotes(event.target.value)}
+                        placeholder="Arrangement notes, solos, endings, or reminders for the band."
+                      />
+                    </label>
+
+                    <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h4 className="text-sm font-medium text-zinc-200">Templates</h4>
+                          <p className="mt-1 text-xs text-zinc-400">Optional song-form starters.</p>
+                        </div>
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => setTemplatesExpanded((current) => !current)}>
+                          {templatesExpanded ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
+                      {templatesExpanded ? (
+                        <div className="flex flex-wrap gap-2">
+                          {Object.keys(TEMPLATE_PRESETS).map((name) => (
+                            <button key={name} type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleInsertTemplate(name)}>
+                              {name}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </section>
+
+                    <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h4 className="text-sm font-medium text-zinc-200">Rare Settings</h4>
+                          <p className="mt-1 text-xs text-zinc-400">Chart style and transposition tools.</p>
+                        </div>
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleTransposeChart}>
+                          Transpose
+                        </button>
+                      </div>
+                      <div className="grid gap-3">
+                        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-950/30 bg-stone-950/45 px-4 py-3 text-sm text-zinc-200">
+                          <input type="radio" name="chart-mode" value="simple" checked={chartMode === 'simple'} onChange={() => setChartMode('simple')} className="mt-1" />
+                          <span>Simple Bluegrass Mode</span>
+                        </label>
+                        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-950/30 bg-stone-950/45 px-4 py-3 text-sm text-zinc-200">
+                          <input type="radio" name="chart-mode" value="strict" checked={chartMode === 'strict'} onChange={() => setChartMode('strict')} className="mt-1" />
+                          <span>Strict Nashville Mode</span>
+                        </label>
+                      </div>
+                      <p className="text-xs leading-5 text-zinc-400">
+                        Simple mode is designed for quick band charts. Strict mode follows chromatic Nashville theory.
+                      </p>
+                    </section>
                   </div> : null}
                 </section> : null}
-
-                <SectionCard
-                  title="Nashville Output"
-                  description="Edit the final number chart, then copy it, print it, or take it into performance mode."
-                  isOpen={sectionOpen.output}
-                  onToggle={() => handleToggleSection('output')}
-                  className="no-print"
-                >
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCopyChart}>{copyLabel}</button>
-                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
-                    <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>Print Chart</button>
-                  </div>
-
-                  {!isQuickMode ? (
-                    <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4 sm:flex-row sm:flex-wrap sm:items-end">
-                      <label className="flex flex-1 flex-col gap-2 text-sm font-medium text-zinc-200">
-                        Output Measure Grid
-                        <select className={INPUT_CLASS} value={measureGridStyle} onChange={(event) => setMeasureGridStyle(event.target.value as MeasureGridStyle)}>
-                          <option value="off">Off</option>
-                          <option value="simple-bars">Simple Bars</option>
-                          <option value="beat-dots">Beat Dots</option>
-                        </select>
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAddOutputMeasureGrid}>
-                          Apply Grid
-                        </button>
-                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRemoveOutputMeasureGrid}>
-                          Remove Grid
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  <textarea
-                    ref={outputRef}
-                    className="no-print min-h-80 w-full resize-none overflow-hidden rounded-2xl border border-emerald-900/40 bg-stone-950/85 px-4 py-4 font-mono text-lg leading-8 text-emerald-300 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
-                    value={output}
-                    onChange={(event) => setOutput(event.target.value)}
-                    spellCheck={false}
-                  />
-                </SectionCard>
 
                 <div className="print-only print-chart-text -mt-1 text-black">
                   <ChartLines text={printChartText} />
@@ -1966,6 +2086,6 @@ export default function Page() {
           </div>
         </div>
       </main>
-    </>
+    </AuthGate>
   );
 }

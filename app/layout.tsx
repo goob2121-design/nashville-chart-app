@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nashville Chart Builder",
-  description: "Build, edit, and print Nashville Number System charts.",
+  title: "Pinnacle Recording Studio Chart System",
+  description: "Build, edit, save, and print Nashville Number System charts.",
 };
 
 export default function RootLayout({
