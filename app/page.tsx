@@ -408,7 +408,7 @@ function isSingleMeasureToken(token: string) {
   );
 }
 
-function expandMeasureToken(token: string) {
+function expandMeasureToken(token: string): string {
   if (isBeatShorthandToken(token)) {
     return token;
   }
@@ -586,7 +586,7 @@ function convertRoot(root: string, key: KeyName, chartMode: ChartMode) {
   return chartMode === 'simple' ? convertSimpleRoot(root, key) : convertStrictRoot(root, key);
 }
 
-function convertChordToken(chord: string, key: KeyName, chartMode: ChartMode) {
+function convertChordToken(chord: string, key: KeyName, chartMode: ChartMode): string {
   if (chord === '|') {
     return chord;
   }
@@ -627,14 +627,14 @@ function convertChordToken(chord: string, key: KeyName, chartMode: ChartMode) {
   return `${convertedRoot}${formatSuffix(suffix)}${bassRoot ? `/${convertedBass ?? bassRoot}` : ''}`;
 }
 
-function convertLine(line: string, key: KeyName, chartMode: ChartMode) {
+function convertLine(line: string, key: KeyName, chartMode: ChartMode): string {
   return line
     .split(/(\s+)/)
     .map((token) => (token.trim() ? convertChordToken(token, key, chartMode) : token))
     .join('');
 }
 
-function buildConvertedChart(input: string, key: KeyName, chartMode: ChartMode) {
+function buildConvertedChart(input: string, key: KeyName, chartMode: ChartMode): string {
   if (!input.trim()) {
     return '';
   }
@@ -665,7 +665,7 @@ function rootFromNumber(number: string, key: KeyName, chartMode: ChartMode) {
   return chartMode === 'simple' ? rootFromSimpleNumber(number, key) : rootFromStrictNumber(number, key);
 }
 
-function transposeChordToken(token: string, fromKey: KeyName, toKey: KeyName, chartMode: ChartMode) {
+function transposeChordToken(token: string, fromKey: KeyName, toKey: KeyName, chartMode: ChartMode): string {
   if (token === '|') {
     return token;
   }
@@ -709,7 +709,7 @@ function transposeChordToken(token: string, fromKey: KeyName, toKey: KeyName, ch
   return nextRoot ? `${nextRoot}${suffix}${bassRoot ? `/${nextBass ?? bassRoot}` : ''}` : token;
 }
 
-function transposeChartText(input: string, fromKey: KeyName, toKey: KeyName, chartMode: ChartMode) {
+function transposeChartText(input: string, fromKey: KeyName, toKey: KeyName, chartMode: ChartMode): string {
   return normalizeChartInput(input)
     .split('\n')
     .map((line) =>
@@ -745,7 +745,7 @@ function getPlayInKey(concertKey: KeyName, capo: string) {
   return names[(concertSemitone - (capoValue % 12) + 12) % 12];
 }
 
-function createSectionSeparator(line: string) {
+function createSectionSeparator(line: string): string {
   const bracketMatch = line.match(/^\[(.+)\]$/);
   return bracketMatch ? `--- ${bracketMatch[1]} ---` : line;
 }
