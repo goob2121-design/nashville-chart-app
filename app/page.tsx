@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 const MAJOR_KEYS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
 const NOTE_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'] as const;
@@ -25,6 +25,9 @@ type ChartMode = 'simple' | 'strict';
 type KeyName = (typeof MAJOR_KEYS)[number];
 type TimeSignature = (typeof TIME_SIGNATURES)[number];
 type MeasureGridStyle = 'off' | 'simple-bars' | 'beat-dots';
+type UiMode = 'quick' | 'pro';
+type SectionId = 'songSetup' | 'chartBuilder' | 'output' | 'advanced' | 'library';
+type SectionOpenState = Record<SectionId, boolean>;
 
 type ChartSnapshot = {
   artist: string;
@@ -47,6 +50,7 @@ type SavedChart = ChartSnapshot & {
 
 const STORAGE_KEY = 'nashville-chart-builder:saved-charts';
 const SYMBOL_TOOLBAR_STORAGE_KEY = 'nashville-chart-builder:symbol-toolbar-expanded';
+const SECTION_OPEN_STORAGE_KEY = 'nashville-chart-builder:section-open-state';
 
 const INPUT_CLASS =
   'w-full rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20';
@@ -60,6 +64,14 @@ const PRIMARY_BUTTON_CLASS =
   'rounded-xl bg-amber-400 px-4 py-3 text-sm font-semibold text-stone-950 transition hover:bg-amber-300';
 const EMPHASIS_BUTTON_CLASS =
   'rounded-xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-stone-950 transition hover:bg-emerald-300';
+
+const DEFAULT_SECTION_OPEN_STATE: SectionOpenState = {
+  songSetup: true,
+  chartBuilder: true,
+  output: true,
+  advanced: false,
+  library: false,
+};
 
 const SAMPLE_CHART: ChartSnapshot = {
   artist: 'Demo Artist',
@@ -928,6 +940,37 @@ function ShareView({
   );
 }
 
+function SectionCard({
+  title,
+  description,
+  isOpen,
+  onToggle,
+  children,
+  className = '',
+}: {
+  title: string;
+  description: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={`${SUBPANEL_CLASS} ${className}`.trim()}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">{title}</h2>
+          <p className="text-xs leading-5 text-stone-400">{description}</p>
+        </div>
+        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={onToggle}>
+          {isOpen ? 'Hide' : 'Show'}
+        </button>
+      </div>
+      {isOpen ? <div className="mt-4 space-y-4">{children}</div> : null}
+    </section>
+  );
+}
+
 export default function Page() {
   const outputRef = useRef<HTMLTextAreaElement>(null);
   const [songTitle, setSongTitle] = useState(SAMPLE_CHART.title);
@@ -951,7 +994,9 @@ export default function Page() {
   const [smartPasteMessage, setSmartPasteMessage] = useState('');
   const [isShareView, setIsShareView] = useState(false);
   const [performanceMode, setPerformanceMode] = useState(false);
+  const [uiMode, setUiMode] = useState<UiMode>('quick');
   const [symbolsExpanded, setSymbolsExpanded] = useState(false);
+  const [sectionOpen, setSectionOpen] = useState<SectionOpenState>(DEFAULT_SECTION_OPEN_STATE);
   const [measureGridStyle, setMeasureGridStyle] = useState<MeasureGridStyle>('off');
 
   useEffect(() => {
@@ -961,6 +1006,7 @@ export default function Page() {
       try {
         const saved = window.localStorage.getItem(STORAGE_KEY);
         const storedToolbarPreference = window.localStorage.getItem(SYMBOL_TOOLBAR_STORAGE_KEY);
+        const storedSectionState = window.localStorage.getItem(SECTION_OPEN_STORAGE_KEY);
 
         if (saved) {
           const parsed = JSON.parse(saved) as SavedChart[];
@@ -973,10 +1019,16 @@ export default function Page() {
         } else {
           setSymbolsExpanded(false);
         }
+
+        if (storedSectionState) {
+          const parsedSectionState = JSON.parse(storedSectionState) as Partial<SectionOpenState>;
+          setSectionOpen({ ...DEFAULT_SECTION_OPEN_STATE, ...parsedSectionState });
+        }
       } catch {
         setSavedCharts([]);
         setSelectedSavedChartId('');
         setSymbolsExpanded(false);
+        setSectionOpen(DEFAULT_SECTION_OPEN_STATE);
       }
 
       const params = new URLSearchParams(window.location.search);
@@ -1015,6 +1067,7 @@ export default function Page() {
   const activeNashvilleChart = output.trim() ? output : convertedChart.trim() ? convertedChart : '';
   const printChartText = activeNashvilleChart || 'No chart entered.';
   const playInKey = getPlayInKey(selectedKey, capo);
+  const isQuickMode = uiMode === 'quick';
 
   function currentSnapshot() {
     return buildSnapshot({
@@ -1056,6 +1109,14 @@ export default function Page() {
     setSymbolsExpanded((currentValue) => {
       const nextValue = !currentValue;
       window.localStorage.setItem(SYMBOL_TOOLBAR_STORAGE_KEY, String(nextValue));
+      return nextValue;
+    });
+  }
+
+  function handleToggleSection(section: SectionId) {
+    setSectionOpen((currentValue) => {
+      const nextValue = { ...currentValue, [section]: !currentValue[section] };
+      window.localStorage.setItem(SECTION_OPEN_STORAGE_KEY, JSON.stringify(nextValue));
       return nextValue;
     });
   }
@@ -1307,222 +1368,260 @@ export default function Page() {
 
       <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_28%),linear-gradient(180deg,_#1c1917_0%,_#0c0a09_48%,_#020617_100%)] px-4 py-8 text-stone-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 print:max-w-none print:gap-4">
-          <div className="no-print space-y-2">
-            <p className="text-sm uppercase tracking-[0.3em] text-amber-300/80">Nashville Number System</p>
-            <h1 className="text-3xl font-semibold text-white sm:text-4xl">Chart Builder</h1>
-            <p className="max-w-3xl text-sm text-stone-300">
-              Build bluegrass-friendly chord charts, paste lyric sheets, save them locally, and print a clean Nashville sheet.
-            </p>
+          <div className="no-print space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm uppercase tracking-[0.3em] text-amber-300/80">Nashville Number System</p>
+              <h1 className="text-3xl font-semibold text-white sm:text-4xl">Chart Builder</h1>
+              <p className="max-w-3xl text-sm leading-6 text-stone-300">
+                Build bluegrass-friendly charts with a focused Quick Mode for fast song setup, or switch to Pro Mode when you need the full charting toolkit.
+              </p>
+            </div>
+
+            <section className={`${PANEL_CLASS} p-4 sm:p-5`}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Workspace Mode</h2>
+                  <p className="mt-1 text-xs text-stone-400">Quick Mode keeps the essentials on screen. Pro Mode unlocks the full chart workflow.</p>
+                </div>
+                <div className="inline-flex rounded-2xl border border-amber-950/30 bg-stone-950/60 p-1">
+                  <button
+                    type="button"
+                    className={`rounded-xl px-4 py-2 text-sm font-medium transition ${uiMode === 'quick' ? 'bg-amber-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
+                    onClick={() => setUiMode('quick')}
+                  >
+                    Quick Mode
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-xl px-4 py-2 text-sm font-medium transition ${uiMode === 'pro' ? 'bg-emerald-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
+                    onClick={() => setUiMode('pro')}
+                  >
+                    Pro Mode
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
 
           <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr] print:grid-cols-1">
             <section className={`no-print space-y-5 ${PANEL_CLASS}`}>
-              <section className={SUBPANEL_CLASS}>
-                <div className="mb-3">
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Song Info</h2>
-                  <p className="mt-1 text-xs text-stone-400">Core song details, key, feel, and capo reference.</p>
-                </div>
+              <SectionCard
+                title="Song Setup"
+                description="Set the song title, artist, key, and other performance basics."
+                isOpen={sectionOpen.songSetup}
+                onToggle={() => handleToggleSection('songSetup')}
+              >
                 <div className="grid gap-4 sm:grid-cols-2">
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Song Title
-                  <input className={INPUT_CLASS} value={songTitle} onChange={(event) => setSongTitle(event.target.value)} />
-                </label>
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Artist
-                  <input className={INPUT_CLASS} value={artist} onChange={(event) => setArtist(event.target.value)} />
-                </label>
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Concert Key
-                  <select className={INPUT_CLASS} value={selectedKey} onChange={(event) => setSelectedKey(event.target.value as KeyName)}>
-                    {MAJOR_KEYS.map((key) => <option key={key} value={key}>{key}</option>)}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Transpose To Key
-                  <select className={INPUT_CLASS} value={transposeToKey} onChange={(event) => setTransposeToKey(event.target.value as KeyName)}>
-                    {MAJOR_KEYS.map((key) => <option key={key} value={key}>{key}</option>)}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Time Signature
-                  <select className={INPUT_CLASS} value={timeSignature} onChange={(event) => setTimeSignature(event.target.value as TimeSignature)}>
-                    {TIME_SIGNATURES.map((signature) => <option key={signature} value={signature}>{signature}</option>)}
-                  </select>
-                </label>
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Tempo
-                  <input className={INPUT_CLASS} placeholder="120 BPM" value={tempo} onChange={(event) => setTempo(event.target.value)} />
-                </label>
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Capo
-                  <input className={INPUT_CLASS} inputMode="numeric" placeholder="0" value={capo} onChange={(event) => setCapo(event.target.value.replace(/[^\d]/g, ''))} />
-                </label>
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Feel
-                  <select className={INPUT_CLASS} value={feel} onChange={(event) => setFeel(event.target.value)}>
-                    {FEEL_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                </label>
-                <div className="rounded-2xl border border-amber-950/25 bg-amber-500/10 p-4 text-sm text-stone-200">
-                  <p><span className="font-medium text-amber-100">Concert Key:</span> {selectedKey}</p>
-                  <p><span className="font-medium text-amber-100">Capo:</span> {capo || '0'}</p>
-                  <p><span className="font-medium text-amber-100">Play In:</span> {playInKey}</p>
-                </div>
-                </div>
-              </section>
-
-              <section className={SUBPANEL_CLASS}>
-                <h2 className="text-sm font-medium text-zinc-200">Chart Style</h2>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 px-4 py-3 text-sm text-zinc-200">
-                    <input type="radio" name="chart-mode" value="simple" checked={chartMode === 'simple'} onChange={() => setChartMode('simple')} className="mt-1" />
-                    <span>Simple Bluegrass Mode</span>
+                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                    Title
+                    <input className={INPUT_CLASS} value={songTitle} onChange={(event) => setSongTitle(event.target.value)} />
                   </label>
-                  <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-700 px-4 py-3 text-sm text-zinc-200">
-                    <input type="radio" name="chart-mode" value="strict" checked={chartMode === 'strict'} onChange={() => setChartMode('strict')} className="mt-1" />
-                    <span>Strict Nashville Mode</span>
+                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                    Artist
+                    <input className={INPUT_CLASS} value={artist} onChange={(event) => setArtist(event.target.value)} />
                   </label>
                 </div>
-                <p className="text-sm leading-6 text-zinc-400">
-                  Simple mode is designed for quick band charts when players type chords by letter names. Strict mode follows chromatic Nashville theory.
-                </p>
-              </section>
 
-              <section className={SUBPANEL_CLASS}>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <h2 className="text-sm font-medium text-zinc-200">Template Presets</h2>
-                  <p className="text-xs text-zinc-400">Replace or append common bluegrass forms.</p>
+                <div className={`grid gap-4 ${isQuickMode ? 'sm:grid-cols-2' : 'lg:grid-cols-3'}`}>
+                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                    Key
+                    <select className={INPUT_CLASS} value={selectedKey} onChange={(event) => setSelectedKey(event.target.value as KeyName)}>
+                      {MAJOR_KEYS.map((key) => (
+                        <option key={key} value={key}>
+                          {key}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                    Time Signature
+                    <select className={INPUT_CLASS} value={timeSignature} onChange={(event) => setTimeSignature(event.target.value as TimeSignature)}>
+                      {TIME_SIGNATURES.map((signature) => (
+                        <option key={signature} value={signature}>
+                          {signature}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {!isQuickMode ? (
+                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                      Tempo / BPM
+                      <input className={INPUT_CLASS} placeholder="120 BPM" value={tempo} onChange={(event) => setTempo(event.target.value)} />
+                    </label>
+                  ) : null}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {Object.keys(TEMPLATE_PRESETS).map((name) => (
-                    <button key={name} type="button" className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800" onClick={() => handleInsertTemplate(name)}>
-                      {name}
-                    </button>
-                  ))}
-                </div>
-              </section>
 
-              <section className={SUBPANEL_CLASS}>
-                <div className="mb-3">
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Chart Input</h2>
-                  <p className="mt-1 text-xs text-stone-400">Paste a chord sheet, clean it up, and prepare it for conversion.</p>
-                </div>
-                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                  Notes
-                  <textarea className={`${INPUT_CLASS} min-h-24 text-sm leading-6`} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Arrangement notes, solos, endings, or reminders for the band." />
-                </label>
-
-              <section className="space-y-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <h2 className="text-sm font-medium text-zinc-200">Chord Chart</h2>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-stone-400">
-                      Measure Grid Style
-                      <select className="rounded-lg border border-amber-950/40 bg-stone-950/70 px-3 py-2 text-sm normal-case tracking-normal text-stone-100 outline-none transition focus:border-amber-500" value={measureGridStyle} onChange={(event) => setMeasureGridStyle(event.target.value as MeasureGridStyle)}>
-                        <option value="off">Off</option>
-                        <option value="simple-bars">Simple Bars</option>
-                        <option value="beat-dots">Beat Dots</option>
+                {!isQuickMode ? (
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
+                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                      Capo
+                      <input className={INPUT_CLASS} inputMode="numeric" placeholder="0" value={capo} onChange={(event) => setCapo(event.target.value.replace(/[^\d]/g, ''))} />
+                    </label>
+                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                      Feel
+                      <select className={INPUT_CLASS} value={feel} onChange={(event) => setFeel(event.target.value)}>
+                        {FEEL_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
                       </select>
                     </label>
+                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                      Transpose To Key
+                      <select className={INPUT_CLASS} value={transposeToKey} onChange={(event) => setTransposeToKey(event.target.value as KeyName)}>
+                        {MAJOR_KEYS.map((key) => (
+                          <option key={key} value={key}>
+                            {key}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="rounded-2xl border border-amber-950/25 bg-amber-500/10 p-4 text-sm leading-6 text-stone-200">
+                      <p>
+                        <span className="font-medium text-amber-100">Key:</span> {selectedKey}
+                      </p>
+                      <p>
+                        <span className="font-medium text-amber-100">Capo:</span> {capo || '0'}
+                      </p>
+                      <p>
+                        <span className="font-medium text-amber-100">Play In:</span> {playInKey}
+                      </p>
+                    </div>
                   </div>
+                ) : null}
+              </SectionCard>
+
+
+              <SectionCard
+                title="Chart Builder"
+                description="Paste or type the chord chart, then clean it up, grid it, and convert it."
+                isOpen={sectionOpen.chartBuilder}
+                onToggle={() => handleToggleSection('chartBuilder')}
+              >
+                <div className="flex flex-col gap-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4 sm:flex-row sm:items-end sm:justify-between">
+                  <label className="flex flex-1 flex-col gap-2 text-sm font-medium text-zinc-200">
+                    Measure Grid
+                    <select className={INPUT_CLASS} value={measureGridStyle} onChange={(event) => setMeasureGridStyle(event.target.value as MeasureGridStyle)}>
+                      <option value="off">Off</option>
+                      <option value="simple-bars">Simple Bars</option>
+                      <option value="beat-dots">Beat Dots</option>
+                    </select>
+                  </label>
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleSmartPaste}>
-                      Smart Paste / Extract Chords
-                    </button>
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCleanUpInput}>
-                      Clean Up Input
-                    </button>
                     <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAddInputMeasureGrid}>
                       Apply Grid
                     </button>
                     <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRemoveInputMeasureGrid}>
                       Remove Grid
                     </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleSmartPaste}>
+                    Smart Paste
+                  </button>
+                  {!isQuickMode ? (
+                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCleanUpInput}>
+                      Clean Up Input
+                    </button>
+                  ) : null}
+                  {!isQuickMode ? (
                     <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleTransposeChart}>
                       Transpose Chart
                     </button>
+                  ) : null}
+                  <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={handleConvert}>
+                    Convert
+                  </button>
+                </div>
+
+                <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                  Chord Input
+                  <textarea
+                    className={`${INPUT_CLASS} min-h-72 font-mono text-sm leading-7 sm:min-h-80`}
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onBlur={() => setInput(normalizeChartInput(input))}
+                    spellCheck={false}
+                  />
+                </label>
+
+                {smartPasteMessage ? <p className="text-sm text-zinc-300">{smartPasteMessage}</p> : null}
+
+                <p className="text-xs leading-5 text-stone-400">
+                  Grid mode makes each measure/bar easier to see. A dot means hold the previous chord for one beat.
+                </p>
+              </SectionCard>
+
+              {!isQuickMode ? (
+                <SectionCard
+                  title="Save / Library"
+                  description="Save charts on this device, recall them quickly, or generate a read-only share link."
+                  isOpen={sectionOpen.library}
+                  onToggle={() => handleToggleSection('library')}
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>
+                      Save Chart
+                    </button>
+                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareView}>
+                      {shareLabel}
+                    </button>
                   </div>
-                </div>
-                <textarea className={`${INPUT_CLASS} min-h-64 font-mono`} value={input} onChange={(event) => setInput(event.target.value)} onBlur={() => setInput(normalizeChartInput(input))} spellCheck={false} />
-                {smartPasteMessage ? <p className="text-sm text-zinc-400">{smartPasteMessage}</p> : null}
-                <p className="text-xs text-stone-400">Grid mode makes each measure/bar easier to see. Simple Bars adds bar lines only. Beat Dots also expands single-measure chords. A dot means hold the previous chord for one beat.</p>
-              </section>
 
-              <section className="rounded-2xl border border-amber-950/20 bg-black/10 p-4 text-sm text-stone-300">
-                <h4 className="mb-3 text-sm font-medium text-stone-100">Rhythm Help</h4>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <p><span className="font-semibold text-stone-100">1..4</span> = hold 1 for three beats, then 4 on beat 4</p>
-                  <p><span className="font-semibold text-stone-100">1...</span> = whole measure of 1</p>
-                  <p><span className="font-semibold text-stone-100">1.4.</span> = two beats of 1, two beats of 4</p>
-                  <p><span className="font-semibold text-stone-100">1451</span> = one beat each</p>
-                  <p><span className="font-semibold text-stone-100">.</span> = hold previous chord for one beat</p>
-                  <p><span className="font-semibold text-stone-100">|</span> = optional bar separator</p>
-                </div>
-              </section>
-              </section>
+                  {shareUrl ? (
+                    <a href={shareUrl} className="block break-all rounded-2xl border border-amber-950/30 bg-stone-950/60 px-4 py-3 text-sm text-stone-300">
+                      {shareUrl}
+                    </a>
+                  ) : null}
 
-              <section className={SUBPANEL_CLASS}>
-                <div className="mb-3">
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Saved Charts</h2>
-                  <p className="mt-1 text-xs text-stone-400">Keep reusable charts on this device and recall them quickly.</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={handleConvert}>
-                  Convert to Nashville Numbers
-                </button>
-                <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>
-                  Save Chart
-                </button>
-              </div>
-
-              <section className="space-y-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <h2 className="text-sm font-medium text-zinc-200">Saved Charts</h2>
-                  {hasMounted ? (
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleLoadChart} disabled={!selectedSavedChartId}>
-                        Load Chart
-                      </button>
-                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleDeleteChart} disabled={!selectedSavedChartId}>
-                        Delete Chart
-                      </button>
+                  <section className="space-y-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <h3 className="text-sm font-medium text-zinc-200">Saved Charts</h3>
+                      {hasMounted ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleLoadChart} disabled={!selectedSavedChartId}>
+                            Load Chart
+                          </button>
+                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleDeleteChart} disabled={!selectedSavedChartId}>
+                            Delete Chart
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-zinc-500">Loading saved charts...</p>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-sm text-zinc-500">Loading saved charts...</p>
-                  )}
-                </div>
-                {hasMounted ? (
-                  <select className={INPUT_CLASS} value={selectedSavedChartId} onChange={(event) => setSelectedSavedChartId(event.target.value)}>
-                    <option value="">Select a saved chart</option>
-                    {savedCharts.map((chart) => <option key={chart.id} value={chart.id}>{chart.id}</option>)}
-                  </select>
-                ) : (
-                  <div className="rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-zinc-500">
-                    Loading saved charts...
-                  </div>
-                )}
-              </section>
-              </section>
+                    {hasMounted ? (
+                      <select className={INPUT_CLASS} value={selectedSavedChartId} onChange={(event) => setSelectedSavedChartId(event.target.value)}>
+                        <option value="">Select a saved chart</option>
+                        {savedCharts.map((chart) => (
+                          <option key={chart.id} value={chart.id}>
+                            {chart.id}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-zinc-500">
+                        Loading saved charts...
+                      </div>
+                    )}
+                  </section>
+                </SectionCard>
+              ) : null}
             </section>
 
             <section className={`${PANEL_CLASS} print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
               <div className="space-y-3 border-b border-amber-950/30 pb-4 print:hidden print:border-zinc-300">
                 <h2 className="text-2xl font-semibold text-white print:text-black">{songTitle || 'Untitled Song'}</h2>
-                <div className="grid gap-2 text-sm text-stone-300 sm:grid-cols-2 lg:grid-cols-4 print:text-black">
+                <div className="grid gap-2 text-sm text-stone-300 sm:grid-cols-2 lg:grid-cols-3 print:text-black">
                   <p><span className="font-medium text-zinc-100 print:text-black">Artist:</span> {artist || 'N/A'}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Concert Key:</span> {selectedKey}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Play In:</span> {playInKey}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Capo:</span> {capo || '0'}</p>
+                  <p><span className="font-medium text-zinc-100 print:text-black">Key:</span> {selectedKey}</p>
                   <p><span className="font-medium text-zinc-100 print:text-black">Time:</span> {timeSignature}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Tempo:</span> {tempo || 'N/A'}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Feel:</span> {feel || 'N/A'}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Style:</span> {chartMode === 'simple' ? 'Simple Bluegrass Mode' : 'Strict Nashville Mode'}</p>
+                  {!isQuickMode ? <p><span className="font-medium text-zinc-100 print:text-black">Play In:</span> {playInKey}</p> : null}
+                  {!isQuickMode ? <p><span className="font-medium text-zinc-100 print:text-black">Tempo:</span> {tempo || 'N/A'}</p> : null}
+                  {!isQuickMode ? <p><span className="font-medium text-zinc-100 print:text-black">Capo:</span> {capo || '0'}</p> : null}
                 </div>
               </div>
 
@@ -1538,31 +1637,69 @@ export default function Page() {
               </div>
 
               <div className="mt-5 space-y-4 print:mt-2 print:space-y-2">
-                <section className={`${SUBPANEL_CLASS} no-print`}>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Save / Share / Print</h3>
-                      <p className="mt-1 text-xs text-stone-400">Export, print, and use the chart live without losing your place.</p>
-                    </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCopyChart}>{copyLabel}</button>
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareView}>{shareLabel}</button>
-                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
-                    <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>Print Chart</button>
-                  </div>
-                </div>
-                </section>
 
-                {shareUrl ? (
-                  <a href={shareUrl} className="no-print block break-all rounded-2xl border border-amber-950/30 bg-stone-950/60 px-4 py-3 text-sm text-stone-300">
-                    {shareUrl}
-                  </a>
-                ) : null}
 
-                <section className={`${SUBPANEL_CLASS} no-print`}>
+                {!isQuickMode ? <section className={`${SUBPANEL_CLASS} no-print`}>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1">
-                      <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Symbols & Tags</h4>
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Symbols & Advanced Tools</h4>
+                      <p className="text-xs text-stone-400">Work with chart shorthand, transposition, notes, templates, and advanced Nashville settings.</p>
+                    </div>
+                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleToggleSection('advanced')}>
+                      {sectionOpen.advanced ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+
+                  {sectionOpen.advanced ? <div className="mt-4 space-y-4">
+                  <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                    <h4 className="text-sm font-medium text-zinc-200">Chart Style</h4>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-950/30 bg-stone-950/45 px-4 py-3 text-sm text-zinc-200">
+                        <input type="radio" name="chart-mode" value="simple" checked={chartMode === 'simple'} onChange={() => setChartMode('simple')} className="mt-1" />
+                        <span>Simple Bluegrass Mode</span>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-950/30 bg-stone-950/45 px-4 py-3 text-sm text-zinc-200">
+                        <input type="radio" name="chart-mode" value="strict" checked={chartMode === 'strict'} onChange={() => setChartMode('strict')} className="mt-1" />
+                        <span>Strict Nashville Mode</span>
+                      </label>
+                    </div>
+                    <p className="text-sm leading-6 text-zinc-400">
+                      Simple mode is designed for quick band charts when players type chords by letter names. Strict mode follows chromatic Nashville theory.
+                    </p>
+                  </section>
+
+                  <section className="mb-4 space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h4 className="text-sm font-medium text-zinc-200">Template Presets</h4>
+                        <p className="mt-1 text-xs text-zinc-400">Replace or append common bluegrass forms.</p>
+                      </div>
+                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleTransposeChart}>
+                        Transpose Chart
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.keys(TEMPLATE_PRESETS).map((name) => (
+                        <button key={name} type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleInsertTemplate(name)}>
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
+                  <label className="mb-4 flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                    Notes
+                    <textarea
+                      className={`${INPUT_CLASS} min-h-24 text-sm leading-6`}
+                      value={notes}
+                      onChange={(event) => setNotes(event.target.value)}
+                      placeholder="Arrangement notes, solos, endings, or reminders for the band."
+                    />
+                  </label>
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-medium text-zinc-200">Symbols & Tags</h4>
                       <p className="text-xs text-stone-400">Insert common Nashville chart marks at the cursor position.</p>
                     </div>
                     <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleToggleSymbols}>
@@ -1604,45 +1741,69 @@ export default function Page() {
                       </section>
                     </>
                   ) : null}
-                </section>
 
-                <section className={`${SUBPANEL_CLASS} no-print`}>
-                  <div className="mb-3">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Nashville Output</h3>
-                    <p className="mt-1 text-xs text-stone-400">Editable number chart ready for printing, sharing, or stage use.</p>
+                  <section className="mt-4 rounded-2xl border border-amber-950/20 bg-black/10 p-4 text-sm text-stone-300">
+                    <h4 className="mb-3 text-sm font-medium text-stone-100">Rhythm Help</h4>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <p><span className="font-semibold text-stone-100">1..4</span> = hold 1 for three beats, then 4 on beat 4</p>
+                      <p><span className="font-semibold text-stone-100">1...</span> = whole measure of 1</p>
+                      <p><span className="font-semibold text-stone-100">1.4.</span> = two beats of 1, two beats of 4</p>
+                      <p><span className="font-semibold text-stone-100">1451</span> = one beat each</p>
+                      <p><span className="font-semibold text-stone-100">.</span> = hold previous chord for one beat</p>
+                      <p><span className="font-semibold text-stone-100">|</span> = optional bar separator</p>
+                    </div>
+                  </section>
+                  </div> : null}
+                </section> : null}
+
+                <SectionCard
+                  title="Nashville Output"
+                  description="Edit the final number chart, then copy it, print it, or take it into performance mode."
+                  isOpen={sectionOpen.output}
+                  onToggle={() => handleToggleSection('output')}
+                  className="no-print"
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCopyChart}>{copyLabel}</button>
+                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
+                    <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>Print Chart</button>
                   </div>
-                  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-                    <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-stone-400">
-                      Measure Grid Style
-                      <select className="rounded-lg border border-amber-950/40 bg-stone-950/70 px-3 py-2 text-sm normal-case tracking-normal text-stone-100 outline-none transition focus:border-amber-500" value={measureGridStyle} onChange={(event) => setMeasureGridStyle(event.target.value as MeasureGridStyle)}>
-                        <option value="off">Off</option>
-                        <option value="simple-bars">Simple Bars</option>
-                        <option value="beat-dots">Beat Dots</option>
-                      </select>
-                    </label>
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAddOutputMeasureGrid}>
-                      Apply Grid
-                    </button>
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRemoveOutputMeasureGrid}>
-                      Remove Grid
-                    </button>
-                  </div>
-                <textarea
-                  ref={outputRef}
-                  className="no-print min-h-80 w-full resize-none overflow-hidden rounded-2xl border border-emerald-900/40 bg-stone-950/85 px-4 py-4 font-mono text-lg leading-8 text-emerald-300 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
-                  value={output}
-                  onChange={(event) => setOutput(event.target.value)}
-                  spellCheck={false}
-                />
-                  <p className="mt-3 text-xs text-stone-400">Grid mode makes each measure/bar easier to see. Simple Bars adds bar lines only. Beat Dots also expands single-measure chords. A dot means hold the previous chord for one beat.</p>
-                </section>
+
+                  {!isQuickMode ? (
+                    <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+                      <label className="flex flex-1 flex-col gap-2 text-sm font-medium text-zinc-200">
+                        Output Measure Grid
+                        <select className={INPUT_CLASS} value={measureGridStyle} onChange={(event) => setMeasureGridStyle(event.target.value as MeasureGridStyle)}>
+                          <option value="off">Off</option>
+                          <option value="simple-bars">Simple Bars</option>
+                          <option value="beat-dots">Beat Dots</option>
+                        </select>
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAddOutputMeasureGrid}>
+                          Apply Grid
+                        </button>
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRemoveOutputMeasureGrid}>
+                          Remove Grid
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <textarea
+                    ref={outputRef}
+                    className="no-print min-h-80 w-full resize-none overflow-hidden rounded-2xl border border-emerald-900/40 bg-stone-950/85 px-4 py-4 font-mono text-lg leading-8 text-emerald-300 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                    value={output}
+                    onChange={(event) => setOutput(event.target.value)}
+                    spellCheck={false}
+                  />
+                </SectionCard>
 
                 <div className="print-only print-chart-text -mt-1 text-black">
                   <ChartLines text={printChartText} />
                 </div>
 
                 {notes.trim() ? (
-                  <section className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4 text-sm text-zinc-300 print:order-first print:mb-1 print:border-0 print:bg-white print:p-0 print:text-black">
+                  <section className="print-only text-black">
                     <h4 className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-zinc-100 print:mb-1 print:text-black">Notes</h4>
                     <p className="whitespace-pre-wrap leading-7 print:leading-5">{notes}</p>
                   </section>
