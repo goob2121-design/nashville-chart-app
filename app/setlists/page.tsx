@@ -14,6 +14,8 @@ import {
 } from '../lib/cloudSync';
 
 type SavedChart = {
+  audioPath?: string;
+  audioUrl?: string;
   artist?: string;
   capo?: string;
   id: string;
@@ -57,6 +59,10 @@ function chartTitle(chart?: SavedChart) {
 
 function chartArtist(chart?: SavedChart) {
   return chart?.artist?.trim() || '';
+}
+
+function chartHasAudio(chart?: SavedChart) {
+  return Boolean(chart?.audioUrl?.trim() || chart?.audioPath?.trim());
 }
 
 function makeId(prefix: string) {
@@ -178,7 +184,14 @@ function SetlistReadOnlyView({ data }: { data: SharedSetlistData }) {
 
                 return (
                   <li key={`${songId}-${index}`} className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4 print:rounded-none print:border-0 print:bg-white print:p-0">
-                    <h3 className="text-lg font-semibold text-white print:inline print:text-base print:text-black">{chartTitle(chart)}</h3>
+                    <div className="flex flex-wrap items-center gap-2 print:inline">
+                      <h3 className="text-lg font-semibold text-white print:inline print:text-base print:text-black">{chartTitle(chart)}</h3>
+                      {chartHasAudio(chart) ? (
+                        <span className="no-print rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+                          MP3
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-2 text-sm text-zinc-300 print:inline print:text-black">
                       {chart ? (
                         <>
@@ -694,7 +707,7 @@ export default function SetlistsPage() {
                           <option value="">Select a song</option>
                           {sortedCharts.map((chart) => (
                             <option key={chart.id} value={chart.id}>
-                              {chartTitle(chart)}{chart.key ? ` - ${chart.key}` : ''}
+                              {chartHasAudio(chart) ? '[MP3] ' : ''}{chartTitle(chart)}{chart.key ? ` - ${chart.key}` : ''}
                             </option>
                           ))}
                         </select>
@@ -724,9 +737,16 @@ export default function SetlistsPage() {
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between print:block">
                               <div className="min-w-0">
                                 <p className="text-xs uppercase tracking-[0.18em] text-stone-500 print:hidden">Song {index + 1}</p>
-                                <h3 className="break-words text-lg font-semibold text-white print:inline print:text-base print:text-black">
-                                  {chartTitle(chart)}
-                                </h3>
+                                <div className="flex flex-wrap items-center gap-2 print:inline">
+                                  <h3 className="break-words text-lg font-semibold text-white print:inline print:text-base print:text-black">
+                                    {chartTitle(chart)}
+                                  </h3>
+                                  {chartHasAudio(chart) ? (
+                                    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200 print:hidden">
+                                      MP3
+                                    </span>
+                                  ) : null}
+                                </div>
                                 {chartArtist(chart) ? <p className="mt-1 text-sm text-stone-300 print:hidden">{chartArtist(chart)}</p> : null}
                                 <p className="mt-2 text-sm text-stone-300 print:inline print:text-black">
                                   {chart ? (

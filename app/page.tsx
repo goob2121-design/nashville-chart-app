@@ -28,7 +28,10 @@ const SECTION_LABELS = [
   'bridge',
   'break',
   'solo',
+  'kickoff',
+  'full band kickoff',
   'instrumental',
+  'instrumental break',
   'turnaround',
   'tag',
   'ending',
@@ -209,25 +212,44 @@ const SYMBOL_CATEGORIES = {
     { label: '[V3]', value: '[V3]' },
     { label: '[Ch]', value: '[Ch]' },
     { label: '[Br]', value: '[Br]' },
-    { label: '[Solo]', value: '[Solo]' },
     { label: '[Break]', value: '[Break]' },
     { label: '[Tag]', value: '[Tag]' },
     { label: '[Outro]', value: '[Outro]' },
     { label: '[A Part]', value: '[A Part]' },
     { label: '[B Part]', value: '[B Part]' },
   ],
-  Repeats: [
-    { label: '[x2]', value: '[x2]' },
-    { label: '[x3]', value: '[x3]' },
-    { label: '||:', value: '||:' },
-    { label: ':||', value: ':||' },
-    { label: '[Repeat Last Line]', value: '[Repeat Last Line]' },
-    { label: '[Same as Verse 1]', value: '[Same as Verse 1]' },
-    { label: '[Same as Chorus]', value: '[Same as Chorus]' },
-    { label: '[V2 = V1]', value: '[V2 = V1]' },
-    { label: '[Ch2 = Ch1]', value: '[Ch2 = Ch1]' },
+  Breaks: [
+    { label: '[Break]', value: '[Break]' },
+    { label: '[Instrumental Break]', value: '[Instrumental Break]' },
+    { label: '[Banjo Break]', value: '[Banjo Break]' },
+    { label: '[Guitar Break]', value: '[Guitar Break]' },
+    { label: '[Mandolin Break]', value: '[Mandolin Break]' },
+    { label: '[Fiddle Break]', value: '[Fiddle Break]' },
+    { label: '[Dobro Break]', value: '[Dobro Break]' },
+    { label: '[Bass Break]', value: '[Bass Break]' },
+    { label: '[Mando Chop In]', value: '[Mando Chop In]' },
+    { label: '[Harmony In]', value: '[Harmony In]' },
+    { label: '[Turnaround]', value: '[Turnaround]' },
+    { label: '[Walk Up]', value: '[Walk Up]' },
+  ],
+  Kickoffs: [
+    { label: '[Kickoff]', value: '[Kickoff]' },
+    { label: '[Full Band Kickoff]', value: '[Full Band Kickoff]' },
+    { label: '[Banjo Kickoff]', value: '[Banjo Kickoff]' },
+    { label: '[Guitar Kickoff]', value: '[Guitar Kickoff]' },
+    { label: '[Mandolin Kickoff]', value: '[Mandolin Kickoff]' },
+    { label: '[Fiddle Kickoff]', value: '[Fiddle Kickoff]' },
+    { label: '[Dobro Kickoff]', value: '[Dobro Kickoff]' },
+    { label: '[Kick on 5]', value: '[Kick on 5]' },
+    { label: '[Stop on 1]', value: '[Stop on 1]' },
   ],
   Endings: [
+    { label: '[Tag]', value: '[Tag]' },
+    { label: '[Tag Last Line]', value: '[Tag Last Line]' },
+    { label: '[Tag Last Line x2]', value: '[Tag Last Line x2]' },
+    { label: '[Tag Chorus]', value: '[Tag Chorus]' },
+    { label: '[Tag Chorus x2]', value: '[Tag Chorus x2]' },
+    { label: '[Repeat Last Line]', value: '[Repeat Last Line]' },
     { label: '[Tag Last Line Chorus]', value: '[Tag Last Line Chorus]' },
     { label: '[Tag Last Line Chorus x2]', value: '[Tag Last Line Chorus x2]' },
     { label: '[Outro = Chorus Tag]', value: '[Outro = Chorus Tag]' },
@@ -236,18 +258,11 @@ const SYMBOL_CATEGORIES = {
     { label: '[Run Out]', value: '[Run Out]' },
     { label: '[Repeat to End]', value: '[Repeat to End]' },
   ],
-  Bluegrass: [
-    { label: '[Banjo Kickoff]', value: '[Banjo Kickoff]' },
-    { label: '[Fiddle Kickoff]', value: '[Fiddle Kickoff]' },
-    { label: '[Dobro Solo]', value: '[Dobro Solo]' },
-    { label: '[Mando Chop In]', value: '[Mando Chop In]' },
-    { label: '[Harmony In]', value: '[Harmony In]' },
-    { label: '[Turnaround]', value: '[Turnaround]' },
-    { label: '[Walk Up]', value: '[Walk Up]' },
-    { label: '[Kick on 5]', value: '[Kick on 5]' },
-    { label: '[Stop on 1]', value: '[Stop on 1]' },
-  ],
   Rhythm: [
+    { label: '[x2]', value: '[x2]' },
+    { label: '[x3]', value: '[x3]' },
+    { label: '||:', value: '||:' },
+    { label: ':||', value: ':||' },
     { label: '.', value: '.' },
     { label: '/', value: '/' },
     { label: '1...', value: '1...' },
@@ -289,7 +304,7 @@ const TEMPLATE_PRESETS: Record<string, string> = {
 
 [Verse]
 
-[Solo]
+[Mandolin Break]
 
 [Chorus]
 
@@ -304,6 +319,20 @@ const SMART_REFERENCE_PATTERNS = [
   { pattern: /^same as chorus$/i, format: () => '[Same as Chorus]' },
   { pattern: /^same as intro$/i, format: () => '[Same as Intro]' },
   { pattern: /^repeat chorus$/i, format: () => '[Same as Chorus]' },
+  { pattern: /^banjo break$/i, format: () => '[Banjo Break]' },
+  { pattern: /^guitar break$/i, format: () => '[Guitar Break]' },
+  { pattern: /^mandolin break$/i, format: () => '[Mandolin Break]' },
+  { pattern: /^fiddle break$/i, format: () => '[Fiddle Break]' },
+  { pattern: /^dobro break$/i, format: () => '[Dobro Break]' },
+  { pattern: /^bass break$/i, format: () => '[Bass Break]' },
+  { pattern: /^(?:instrumental )?break$/i, format: () => '[Break]' },
+  { pattern: /^banjo kickoff$/i, format: () => '[Banjo Kickoff]' },
+  { pattern: /^guitar kickoff$/i, format: () => '[Guitar Kickoff]' },
+  { pattern: /^mandolin kickoff$/i, format: () => '[Mandolin Kickoff]' },
+  { pattern: /^fiddle kickoff$/i, format: () => '[Fiddle Kickoff]' },
+  { pattern: /^dobro kickoff$/i, format: () => '[Dobro Kickoff]' },
+  { pattern: /^full band kickoff$/i, format: () => '[Full Band Kickoff]' },
+  { pattern: /^kickoff$/i, format: () => '[Kickoff]' },
   { pattern: /^tag last line chorus$/i, format: () => '[Last Line Chorus]' },
   { pattern: /^solo over verse$/i, format: () => '[Verse Chords]' },
   { pattern: /^solo over chorus$/i, format: () => '[Chorus Chords]' },
@@ -400,6 +429,10 @@ function formatSectionHeading(line: string) {
 
   if (/^verse(?:\s+\d+)?$/.test(lower)) {
     return `[${titleCase(cleaned)}]`;
+  }
+
+  if (lower === 'solo') {
+    return '[Break]';
   }
 
   if (SECTION_LABELS.includes(lower as (typeof SECTION_LABELS)[number])) {
@@ -861,7 +894,7 @@ function createSectionSeparator(line: string): string {
 }
 
 function isReferenceTag(line: string) {
-  return /^\[(?:Same as .+|V2 = V1|V3 = V1|Ch2 = Ch1|Solo = Verse|Break = Chorus|Outro = Intro|Outro = Chorus Tag|Last Line Chorus|Last 2 Lines Chorus|Verse Chords|Chorus Chords|Kick on 5|Stop on 1|Build|Half-time|Walk Up|N\.C\.|Cold End|Fade|Hold Last 1|Run Out|Repeat to End|x2|x3|Banjo Kickoff|Fiddle Kickoff|Dobro Solo|Mando Chop In|Harmony In|Tag Last Line x2|Tag Last Line Chorus|Tag Last Line Chorus x2)\]$/i.test(
+  return /^\[(?:Same as .+|V2 = V1|V3 = V1|Ch2 = Ch1|Solo = Verse|Break = Chorus|Outro = Intro|Outro = Chorus Tag|Last Line Chorus|Last 2 Lines Chorus|Verse Chords|Chorus Chords|Kick on 5|Stop on 1|Build|Half-time|Walk Up|N\.C\.|Cold End|Fade|Hold Last 1|Run Out|Repeat to End|x2|x3|Kickoff|Full Band Kickoff|Banjo Kickoff|Guitar Kickoff|Mandolin Kickoff|Fiddle Kickoff|Dobro Kickoff|Banjo Break|Guitar Break|Mandolin Break|Fiddle Break|Dobro Break|Bass Break|Instrumental Break|Dobro Solo|Mando Chop In|Harmony In|Tag Last Line|Tag Last Line x2|Tag Chorus|Tag Chorus x2|Tag Last Line Chorus|Tag Last Line Chorus x2)\]$/i.test(
     line.trim()
   );
 }
@@ -924,6 +957,11 @@ function normalizeSavedChart(chart: CloudSavedChart): SavedChart {
 function savedChartLabel(chart: SavedChart) {
   const title = chart.title?.trim() || 'Untitled Chart';
   const artist = chart.artist?.trim();
+  const audioPrefix = chart.audioUrl?.trim() || chart.audioPath?.trim() ? '[MP3] ' : '';
+
+  if (audioPrefix) {
+    return `${audioPrefix}${artist ? `${title} - ${artist}` : title}`;
+  }
 
   return artist ? `${title} — ${artist}` : title;
 }
@@ -1782,6 +1820,9 @@ export default function Page() {
               <p><span className="font-semibold text-stone-100">/</span> = slash chord or bass note</p>
               <p><span className="font-semibold text-stone-100">- or m</span> = minor chord</p>
               <p><span className="font-semibold text-stone-100">[Intro]</span> = beginning section</p>
+              <p><span className="font-semibold text-stone-100">[Break]</span> = bluegrass instrumental feature</p>
+              <p><span className="font-semibold text-stone-100">[Banjo Break]</span> = instrument-specific break</p>
+              <p><span className="font-semibold text-stone-100">[Fiddle Kickoff]</span> = instrument-specific kickoff</p>
               <p><span className="font-semibold text-stone-100">[Tag]</span> = repeat ending or last line</p>
               <p><span className="font-semibold text-stone-100">[Turnaround]</span> = short phrase leading around</p>
               <p><span className="font-semibold text-stone-100">[A Part] / [B Part]</span> = fiddle tune sections</p>
@@ -2040,6 +2081,11 @@ export default function Page() {
 
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>Save Chart</button>
+                  {hasAttachedAudio ? (
+                    <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200">
+                      MP3 Attached
+                    </span>
+                  ) : null}
                   {chartAudioDownloadUrl ? (
                     <a
                       href={chartAudioDownloadUrl}
@@ -2197,7 +2243,14 @@ export default function Page() {
 
             <section className={`order-2 ${PANEL_CLASS} ${isQuickMode ? '' : 'xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto'} print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
               <div className="space-y-3 border-b border-amber-950/30 pb-4 print:hidden print:border-zinc-300">
-                <h2 className="text-2xl font-semibold text-white print:text-black">{songTitle || 'Untitled Song'}</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-2xl font-semibold text-white print:text-black">{songTitle || 'Untitled Song'}</h2>
+                  {hasAttachedAudio ? (
+                    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+                      MP3
+                    </span>
+                  ) : null}
+                </div>
                 <div className="grid gap-2 text-sm text-stone-300 sm:grid-cols-2 lg:grid-cols-3 print:text-black">
                   <p><span className="font-medium text-zinc-100 print:text-black">Artist:</span> {artist || 'N/A'}</p>
                   <p><span className="font-medium text-zinc-100 print:text-black">Key:</span> {selectedKey}</p>
@@ -2288,7 +2341,7 @@ export default function Page() {
                         className={`${INPUT_CLASS} min-h-24 text-sm leading-6`}
                         value={notes}
                         onChange={(event) => setNotes(event.target.value)}
-                        placeholder="Arrangement notes, solos, endings, or reminders for the band."
+                        placeholder="Arrangement notes, breaks, endings, or reminders for the band."
                       />
                     </label>
 
