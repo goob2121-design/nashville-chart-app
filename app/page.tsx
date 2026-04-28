@@ -1287,6 +1287,7 @@ export default function Page() {
   const playInKey = getPlayInKey(selectedKey, capo);
   const isQuickMode = uiMode === 'quick';
   const chartAudioDownloadUrl = resolveChartAudioDownloadUrl({ audioPath, audioUrl });
+  const hasAttachedAudio = Boolean(audioUrl.trim() || audioPath.trim());
 
   function currentSnapshot() {
     return buildSnapshot({
@@ -1324,6 +1325,12 @@ export default function Page() {
     setChartMode(chart.chartMode);
     setInput(chart.chordChart);
     setOutput(chart.nashvilleChart);
+  }
+
+  function applyAudioAttachment(fields: Pick<ChartSnapshot, 'audioFilename' | 'audioPath' | 'audioUrl'>) {
+    setAudioFilename(fields.audioFilename ?? '');
+    setAudioPath(fields.audioPath ?? '');
+    setAudioUrl(fields.audioUrl ?? '');
   }
 
   function persistSavedCharts(nextCharts: SavedChart[]) {
@@ -1502,7 +1509,7 @@ export default function Page() {
         setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
         setCloudMessage('Saved locally. Cloud sync failed, so localStorage is still your backup.');
         return savedChart;
-      } else if (result.chart && result.chart.id !== savedChart.id) {
+      } else if (result.chart) {
         const cloudSavedChart = normalizeSavedChart(result.chart);
         const cloudCharts = nextCharts.some((chart) => chart.id === savedChart.id)
           ? nextCharts.map((chart) => (chart.id === savedChart.id ? cloudSavedChart : chart))
@@ -1510,8 +1517,12 @@ export default function Page() {
         persistSavedCharts(cloudCharts);
         setSelectedSavedChartId(cloudSavedChart.id);
         setCurrentChartId(cloudSavedChart.id);
-        replaceLocalChartReferences(savedChart.id, cloudSavedChart.id);
-        setCloudMessage('Saved locally and synced to cloud. Local chart ID was updated to the cloud UUID.');
+        if (cloudSavedChart.id !== savedChart.id) {
+          replaceLocalChartReferences(savedChart.id, cloudSavedChart.id);
+          setCloudMessage('Saved locally and synced to cloud. Local chart ID was updated to the cloud UUID.');
+        } else {
+          setCloudMessage('Saved locally and synced to cloud.');
+        }
         return cloudSavedChart;
       } else {
         setCloudMessage('Saved locally and synced to cloud.');
@@ -1557,12 +1568,19 @@ export default function Page() {
       return;
     }
 
-    const updatedChart = await saveChartRecord({
+    const audioFields = {
       audioFilename: uploadResult.audioFilename,
       audioPath: uploadResult.audioPath,
       audioUrl: uploadResult.audioUrl,
+    };
+
+    applyAudioAttachment(audioFields);
+
+    const updatedChart = await saveChartRecord({
+      ...audioFields,
       id: savedChart.id,
     });
+    applyAudioAttachment(updatedChart);
 
     if (previousAudioPath && previousAudioPath !== updatedChart.audioPath) {
       await removeChartAudioFile(previousAudioPath);
@@ -1597,6 +1615,7 @@ export default function Page() {
       audioUrl: '',
       id: savedChart.id,
     });
+    applyAudioAttachment({ audioFilename: '', audioPath: '', audioUrl: '' });
     setAudioMessage('MP3 removed from this chart.');
   }
 
@@ -2069,7 +2088,7 @@ export default function Page() {
                       </div>
                       {cloudStatus.connected ? (
                         <div className="flex flex-wrap gap-2">
-                          {!audioUrl.trim() ? (
+                          {!hasAttachedAudio ? (
                             <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => audioInputRef.current?.click()}>
                               Upload MP3
                             </button>
@@ -2105,22 +2124,26 @@ export default function Page() {
                           }}
                         />
 
-                        {chartAudioDownloadUrl ? (
+                        {hasAttachedAudio ? (
                           <div className="flex flex-col gap-3 rounded-xl border border-amber-950/20 bg-stone-950/55 p-3 sm:flex-row sm:items-center sm:justify-between">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-stone-100">{audioFilename || 'Attached MP3'}</p>
-                              <p className="mt-1 text-xs text-stone-400">Stored in Supabase Storage</p>
+                              <p className="mt-1 text-xs text-stone-400">
+                                {chartAudioDownloadUrl ? 'Stored in Supabase Storage' : 'Attached MP3 path saved. Reconnect cloud sync to download.'}
+                              </p>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                              <a
-                                href={chartAudioDownloadUrl}
-                                download={audioFilename || undefined}
-                                target="_blank"
-                                rel="noreferrer"
-                                className={SECONDARY_BUTTON_CLASS}
-                              >
-                                Download MP3
-                              </a>
+                              {chartAudioDownloadUrl ? (
+                                <a
+                                  href={chartAudioDownloadUrl}
+                                  download={audioFilename || undefined}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={SECONDARY_BUTTON_CLASS}
+                                >
+                                  Download MP3
+                                </a>
+                              ) : null}
                               <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRemoveAudio}>
                                 Remove MP3
                               </button>
