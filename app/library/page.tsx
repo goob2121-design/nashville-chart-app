@@ -18,6 +18,9 @@ import {
 } from '../lib/cloudSync';
 
 type SavedChart = {
+  audioFilename?: string;
+  audioPath?: string;
+  audioUrl?: string;
   artist?: string;
   capo?: string;
   chartMode?: string;
@@ -229,7 +232,14 @@ function ChartCard({
               {isFavorite ? '★' : '☆'}
             </button>
             <div className="min-w-0">
-              <h3 className="break-words text-xl font-semibold text-white">{chartTitle(chart)}</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="break-words text-xl font-semibold text-white">{chartTitle(chart)}</h3>
+                {(chart.audioUrl?.trim() || chart.audioPath?.trim()) ? (
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+                    MP3
+                  </span>
+                ) : null}
+              </div>
               {chartArtist(chart) ? <p className="mt-1 break-words text-sm text-stone-300">{chartArtist(chart)}</p> : null}
             </div>
           </div>
@@ -282,7 +292,14 @@ function RecentShortcutCard({
     <article className="flex min-w-64 flex-col justify-between gap-3 rounded-2xl border border-amber-950/30 bg-stone-950/55 p-3 shadow-lg shadow-black/10 sm:min-w-72">
       <div className="min-w-0 space-y-2">
         <div className="flex items-start justify-between gap-3">
-          <h3 className="line-clamp-2 break-words text-sm font-semibold leading-5 text-white">{chartTitle(chart)}</h3>
+          <div className="space-y-1">
+            <h3 className="line-clamp-2 break-words text-sm font-semibold leading-5 text-white">{chartTitle(chart)}</h3>
+            {(chart.audioUrl?.trim() || chart.audioPath?.trim()) ? (
+              <span className="inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+                MP3
+              </span>
+            ) : null}
+          </div>
           {isFavorite ? <span className="shrink-0 text-amber-300">★</span> : null}
         </div>
         {chartArtist(chart) ? <p className="truncate text-xs text-stone-300">{chartArtist(chart)}</p> : null}

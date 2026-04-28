@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 export type SavedChart = {
+  audioFilename?: string;
+  audioPath?: string;
+  audioUrl?: string;
   artist?: string;
   capo?: string;
   chartMode?: string;
@@ -32,6 +35,9 @@ export type CloudStatus = {
 
 type ChartRow = {
   id: string;
+  audio_filename: string | null;
+  audio_path: string | null;
+  audio_url: string | null;
   title: string | null;
   artist: string | null;
   key: string | null;
@@ -133,6 +139,9 @@ export function getInitialCloudStatus(): CloudStatus {
 function chartToRow(chart: SavedChart, isFavorite = false): ChartInsertRow {
   return {
     ...(isUuid(chart.id) ? { id: chart.id } : {}),
+    audio_filename: chart.audioFilename ?? '',
+    audio_path: chart.audioPath ?? '',
+    audio_url: chart.audioUrl ?? '',
     title: chart.title ?? '',
     artist: chart.artist ?? '',
     key: chart.key ?? '',
@@ -151,6 +160,9 @@ function chartToRow(chart: SavedChart, isFavorite = false): ChartInsertRow {
 
 function rowToChart(row: ChartRow): SavedChart {
   return {
+    audioFilename: row.audio_filename ?? '',
+    audioPath: row.audio_path ?? '',
+    audioUrl: row.audio_url ?? '',
     id: row.id,
     title: row.title ?? '',
     artist: row.artist ?? '',
@@ -197,6 +209,71 @@ function cloudError(error: unknown) {
   }
 
   return 'Supabase is unavailable. Using localStorage.';
+}
+
+const AUDIO_BUCKET = 'song-audio';
+
+function sanitizeAudioFileName(filename: string) {
+  const withoutExtension = filename.replace(/\.mp3$/i, '');
+  const safeBaseName = withoutExtension
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'chart-audio';
+
+  return `${safeBaseName}.mp3`;
+}
+
+export async function uploadChartAudioFile(chartId: string, file: File) {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return { ok: false, error: 'Missing Supabase env vars.', audioUrl: '', audioFilename: '', audioPath: '' };
+  }
+
+  if (!isUuid(chartId)) {
+    return { ok: false, error: 'Chart must be saved to the cloud before uploading audio.', audioUrl: '', audioFilename: '', audioPath: '' };
+  }
+
+  if (!/\.mp3$/i.test(file.name) || (file.type && file.type !== 'audio/mpeg')) {
+    return { ok: false, error: 'Only MP3 files are supported.', audioUrl: '', audioFilename: '', audioPath: '' };
+  }
+
+  const audioFilename = sanitizeAudioFileName(file.name);
+  const audioPath = `charts/${chartId}/${Date.now()}-${audioFilename}`;
+  const { error } = await supabase.storage.from(AUDIO_BUCKET).upload(audioPath, file, {
+    contentType: 'audio/mpeg',
+    upsert: false,
+  });
+
+  if (error) {
+    return { ok: false, error: cloudError(error), audioUrl: '', audioFilename: '', audioPath: '' };
+  }
+
+  const { data } = supabase.storage.from(AUDIO_BUCKET).getPublicUrl(audioPath);
+
+  return {
+    ok: true,
+    error: '',
+    audioFilename: file.name,
+    audioPath,
+    audioUrl: data.publicUrl,
+  };
+}
+
+export async function removeChartAudioFile(audioPath: string) {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return { ok: false, error: 'Missing Supabase env vars.' };
+  }
+
+  if (!audioPath.trim()) {
+    return { ok: true, error: '' };
+  }
+
+  const { error } = await supabase.storage.from(AUDIO_BUCKET).remove([audioPath]);
+  return error ? { ok: false, error: cloudError(error) } : { ok: true, error: '' };
 }
 
 export async function fetchCloudCharts() {

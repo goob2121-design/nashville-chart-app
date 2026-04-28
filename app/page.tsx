@@ -7,11 +7,15 @@ import {
   dedupeCharts,
   deleteCloudChart,
   fetchCloudCharts,
+  getSupabaseClient,
   getInitialCloudStatus,
   normalizeChartKey,
+  removeChartAudioFile,
+  uploadChartAudioFile,
   upsertCloudChart,
   type CloudStatus,
   type SavedChart as CloudSavedChart,
+  isUuid,
 } from './lib/cloudSync';
 
 const MAJOR_KEYS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
@@ -43,6 +47,9 @@ type SectionId = 'songSetup' | 'chartBuilder' | 'output' | 'advanced' | 'library
 type SectionOpenState = Record<SectionId, boolean>;
 
 type ChartSnapshot = {
+  audioFilename: string;
+  audioPath: string;
+  audioUrl: string;
   artist: string;
   capo: string;
   chartMode: ChartMode;
@@ -89,6 +96,9 @@ const DEFAULT_SECTION_OPEN_STATE: SectionOpenState = {
 };
 
 const SAMPLE_CHART: ChartSnapshot = {
+  audioFilename: '',
+  audioPath: '',
+  audioUrl: '',
   artist: 'Demo Artist',
   capo: '0',
   chartMode: 'simple',
@@ -175,6 +185,8 @@ const SYMBOL_BUTTONS = [
   { label: '/', value: '/' },
   { label: '-', value: '-' },
 ] as const;
+
+void SYMBOL_BUTTONS;
 
 const SYMBOL_CATEGORIES = {
   Common: [
@@ -855,6 +867,9 @@ function isReferenceTag(line: string) {
 }
 
 function buildSnapshot(values: {
+  audioFilename: string;
+  audioPath: string;
+  audioUrl: string;
   artist: string;
   capo: string;
   chartMode: ChartMode;
@@ -868,6 +883,9 @@ function buildSnapshot(values: {
   title: string;
 }): ChartSnapshot {
   return {
+    audioFilename: values.audioFilename,
+    audioPath: values.audioPath,
+    audioUrl: values.audioUrl,
     artist: values.artist,
     capo: values.capo,
     chartMode: values.chartMode,
@@ -884,6 +902,9 @@ function buildSnapshot(values: {
 
 function normalizeSavedChart(chart: CloudSavedChart): SavedChart {
   return {
+    audioFilename: chart.audioFilename ?? '',
+    audioPath: chart.audioPath ?? '',
+    audioUrl: chart.audioUrl ?? '',
     artist: chart.artist ?? '',
     capo: chart.capo ?? '',
     chartMode: chart.chartMode === 'strict' ? 'strict' : 'simple',
@@ -905,6 +926,24 @@ function savedChartLabel(chart: SavedChart) {
   const artist = chart.artist?.trim();
 
   return artist ? `${title} — ${artist}` : title;
+}
+
+function resolveChartAudioDownloadUrl(chart: Pick<ChartSnapshot, 'audioPath' | 'audioUrl'>) {
+  if ((chart.audioUrl ?? '').trim()) {
+    return chart.audioUrl.trim();
+  }
+
+  if (!(chart.audioPath ?? '').trim()) {
+    return '';
+  }
+
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return '';
+  }
+
+  return supabase.storage.from('song-audio').getPublicUrl(chart.audioPath.trim()).data.publicUrl;
 }
 
 function ChartLines({ text }: { text: string }) {
@@ -940,6 +979,7 @@ function ShareView({
     : chart.chordChart.trim()
       ? chart.chordChart
       : 'No chart entered.';
+  const downloadAudioUrl = resolveChartAudioDownloadUrl(chart);
 
   return (
     <main className="min-h-screen bg-zinc-950 px-4 py-8 text-zinc-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
@@ -987,6 +1027,20 @@ function ShareView({
             >
               Performance Mode
             </button>
+            {downloadAudioUrl ? (
+              <>
+                <a
+                  href={downloadAudioUrl}
+                  download={chart.audioFilename ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+                >
+                  Download MP3
+                </a>
+                {chart.audioFilename?.trim() ? <p className="text-xs text-zinc-400">{chart.audioFilename}</p> : null}
+              </>
+            ) : null}
             {onExit ? (
               <button
                 type="button"
@@ -1087,6 +1141,11 @@ function SectionCard({
 export default function Page() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLTextAreaElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const replaceAudioInputRef = useRef<HTMLInputElement>(null);
+  const [audioFilename, setAudioFilename] = useState(SAMPLE_CHART.audioFilename);
+  const [audioPath, setAudioPath] = useState(SAMPLE_CHART.audioPath);
+  const [audioUrl, setAudioUrl] = useState(SAMPLE_CHART.audioUrl);
   const [songTitle, setSongTitle] = useState(SAMPLE_CHART.title);
   const [artist, setArtist] = useState(SAMPLE_CHART.artist);
   const [selectedKey, setSelectedKey] = useState<KeyName>(SAMPLE_CHART.key);
@@ -1108,6 +1167,7 @@ export default function Page() {
   const [currentChartId, setCurrentChartId] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>(getInitialCloudStatus());
   const [cloudMessage, setCloudMessage] = useState('');
+  const [audioMessage, setAudioMessage] = useState('');
   const [smartPasteMessage, setSmartPasteMessage] = useState('');
   const [isShareView, setIsShareView] = useState(false);
   const [performanceMode, setPerformanceMode] = useState(false);
@@ -1226,9 +1286,13 @@ export default function Page() {
   const printChartText = activeNashvilleChart || 'No chart entered.';
   const playInKey = getPlayInKey(selectedKey, capo);
   const isQuickMode = uiMode === 'quick';
+  const chartAudioDownloadUrl = resolveChartAudioDownloadUrl({ audioPath, audioUrl });
 
   function currentSnapshot() {
     return buildSnapshot({
+      audioFilename,
+      audioPath,
+      audioUrl,
       artist,
       capo,
       chartMode,
@@ -1244,6 +1308,10 @@ export default function Page() {
   }
 
   function applySnapshot(chart: ChartSnapshot) {
+    setAudioMessage('');
+    setAudioFilename(chart.audioFilename ?? '');
+    setAudioPath(chart.audioPath ?? '');
+    setAudioUrl(chart.audioUrl ?? '');
     setSongTitle(chart.title);
     setArtist(chart.artist);
     setSelectedKey(chart.key);
@@ -1405,14 +1473,19 @@ export default function Page() {
     }
   }
 
-  async function handleSaveChart() {
+  async function saveChartRecord(overrides: Partial<SavedChart> = {}) {
     const snapshot = currentSnapshot();
     const now = new Date().toISOString();
     const existingById = currentChartId ? savedCharts.find((chart) => chart.id === currentChartId) : null;
     const existingByChartKey = savedCharts.find((chart) => normalizeChartKey(chart) === normalizeChartKey(snapshot));
     const existingChart = existingById ?? existingByChartKey ?? null;
-    const id = existingChart?.id ?? currentChartId ?? (snapshot.title.trim() || `Untitled ${new Date().toLocaleString()}`);
-    const savedChart = { ...snapshot, id, savedAt: now };
+    const id = overrides.id ?? existingChart?.id ?? currentChartId ?? (snapshot.title.trim() || `Untitled ${new Date().toLocaleString()}`);
+    const savedChart = {
+      ...snapshot,
+      ...overrides,
+      id,
+      savedAt: overrides.savedAt ?? now,
+    };
     const exists = savedCharts.some((chart) => chart.id === id);
     const nextCharts = exists
       ? savedCharts.map((chart) => (chart.id === id ? savedChart : chart))
@@ -1428,6 +1501,7 @@ export default function Page() {
       if (!result.ok) {
         setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
         setCloudMessage('Saved locally. Cloud sync failed, so localStorage is still your backup.');
+        return savedChart;
       } else if (result.chart && result.chart.id !== savedChart.id) {
         const cloudSavedChart = normalizeSavedChart(result.chart);
         const cloudCharts = nextCharts.some((chart) => chart.id === savedChart.id)
@@ -1438,10 +1512,92 @@ export default function Page() {
         setCurrentChartId(cloudSavedChart.id);
         replaceLocalChartReferences(savedChart.id, cloudSavedChart.id);
         setCloudMessage('Saved locally and synced to cloud. Local chart ID was updated to the cloud UUID.');
+        return cloudSavedChart;
       } else {
         setCloudMessage('Saved locally and synced to cloud.');
+        return savedChart;
       }
     }
+
+    return savedChart;
+  }
+
+  async function handleSaveChart() {
+    await saveChartRecord();
+  }
+
+  async function handleUploadAudio(file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    if (!cloudStatus.connected) {
+      setAudioMessage('MP3 uploads require cloud sync.');
+      return;
+    }
+
+    if (!/\.mp3$/i.test(file.name)) {
+      setAudioMessage('Please choose an MP3 file.');
+      return;
+    }
+
+    setAudioMessage('Saving chart before upload...');
+    const savedChart = await saveChartRecord();
+
+    if (!isUuid(savedChart.id)) {
+      setAudioMessage('MP3 uploads require a cloud-synced chart record.');
+      return;
+    }
+
+    const previousAudioPath = savedChart.audioPath ?? audioPath;
+    const uploadResult = await uploadChartAudioFile(savedChart.id, file);
+
+    if (!uploadResult.ok) {
+      setAudioMessage(uploadResult.error || 'MP3 upload failed.');
+      return;
+    }
+
+    const updatedChart = await saveChartRecord({
+      audioFilename: uploadResult.audioFilename,
+      audioPath: uploadResult.audioPath,
+      audioUrl: uploadResult.audioUrl,
+      id: savedChart.id,
+    });
+
+    if (previousAudioPath && previousAudioPath !== updatedChart.audioPath) {
+      await removeChartAudioFile(previousAudioPath);
+    }
+
+    setAudioMessage(`Attached ${uploadResult.audioFilename}.`);
+  }
+
+  async function handleRemoveAudio() {
+    if (!audioPath && !audioUrl && !audioFilename) {
+      return;
+    }
+
+    if (!window.confirm('Remove the attached MP3 from this chart?')) {
+      return;
+    }
+
+    const savedChart = await saveChartRecord();
+
+    if (audioPath) {
+      const removeResult = await removeChartAudioFile(audioPath);
+
+      if (!removeResult.ok) {
+        setAudioMessage(removeResult.error || 'Could not remove the MP3 from storage.');
+        return;
+      }
+    }
+
+    await saveChartRecord({
+      audioFilename: '',
+      audioPath: '',
+      audioUrl: '',
+      id: savedChart.id,
+    });
+    setAudioMessage('MP3 removed from this chart.');
   }
 
   function handleLoadChart() {
@@ -1865,10 +2021,24 @@ export default function Page() {
 
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>Save Chart</button>
+                  {chartAudioDownloadUrl ? (
+                    <a
+                      href={chartAudioDownloadUrl}
+                      download={audioFilename || undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={SECONDARY_BUTTON_CLASS}
+                    >
+                      Download MP3
+                    </a>
+                  ) : null}
                   <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCopyChart}>{copyLabel}</button>
                   <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
                   <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>Print Chart</button>
                 </div>
+                {chartAudioDownloadUrl && audioFilename.trim() ? (
+                  <p className="text-sm text-stone-400">MP3: {audioFilename}</p>
+                ) : null}
               </SectionCard>
 
               {!isQuickMode ? (
@@ -1879,6 +2049,7 @@ export default function Page() {
                   onToggle={() => handleToggleSection('library')}
                 >
                   <div className="flex flex-wrap gap-2">
+                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>Save Chart</button>
                     <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareView}>
                       {shareLabel}
                     </button>
@@ -1889,6 +2060,82 @@ export default function Page() {
                       {shareUrl}
                     </a>
                   ) : null}
+
+                  <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-medium text-zinc-200">Chart MP3</h3>
+                        <p className="mt-1 text-xs text-stone-400">Attach a downloadable MP3 from Supabase Storage.</p>
+                      </div>
+                      {cloudStatus.connected ? (
+                        <div className="flex flex-wrap gap-2">
+                          {!audioUrl.trim() ? (
+                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => audioInputRef.current?.click()}>
+                              Upload MP3
+                            </button>
+                          ) : (
+                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => replaceAudioInputRef.current?.click()}>
+                              Replace MP3
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {cloudStatus.connected ? (
+                      <>
+                        <input
+                          ref={audioInputRef}
+                          type="file"
+                          accept=".mp3,audio/mpeg"
+                          className="hidden"
+                          onChange={(event) => {
+                            void handleUploadAudio(event.target.files?.[0] ?? null);
+                            event.target.value = '';
+                          }}
+                        />
+                        <input
+                          ref={replaceAudioInputRef}
+                          type="file"
+                          accept=".mp3,audio/mpeg"
+                          className="hidden"
+                          onChange={(event) => {
+                            void handleUploadAudio(event.target.files?.[0] ?? null);
+                            event.target.value = '';
+                          }}
+                        />
+
+                        {chartAudioDownloadUrl ? (
+                          <div className="flex flex-col gap-3 rounded-xl border border-amber-950/20 bg-stone-950/55 p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-stone-100">{audioFilename || 'Attached MP3'}</p>
+                              <p className="mt-1 text-xs text-stone-400">Stored in Supabase Storage</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <a
+                                href={chartAudioDownloadUrl}
+                                download={audioFilename || undefined}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={SECONDARY_BUTTON_CLASS}
+                              >
+                                Download MP3
+                              </a>
+                              <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleRemoveAudio}>
+                                Remove MP3
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-stone-400">No MP3 attached to this chart yet.</p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm text-stone-400">MP3 uploads require cloud sync.</p>
+                    )}
+
+                    {audioMessage ? <p className="text-sm text-stone-300">{audioMessage}</p> : null}
+                  </section>
 
                   <section className="space-y-3">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
