@@ -8,6 +8,7 @@ import {
   fetchCloudCharts,
   fetchCloudSetlists,
   getInitialCloudStatus,
+  isUuid,
   updateCloudSetlistFavorite,
   upsertCloudSetlist,
   type CloudStatus,
@@ -514,23 +515,27 @@ export default function SetlistsPage() {
       return;
     }
 
-    const sharedCharts = selectedSetlist.songIds
-      .map((songId) => chartMap.get(songId))
-      .filter((chart): chart is SavedChart => Boolean(chart));
-    const payload: SharedSetlistData = {
-      setlist: selectedSetlist,
-      charts: sharedCharts,
-      sharedAt: new Date().toISOString(),
-    };
-    const url = `${window.location.origin}${window.location.pathname}?shareSetlist=${encodeURIComponent(JSON.stringify(payload))}`;
+    if (!cloudStatus.connected) {
+      setShareUrl('');
+      setShareMessage('Cloud sync is required for short share links.');
+      return;
+    }
+
+    if (!isUuid(selectedSetlist.id)) {
+      setShareUrl('');
+      setShareMessage('Save this setlist to cloud before sharing.');
+      return;
+    }
+
+    const url = `${window.location.origin}/share/setlist/${selectedSetlist.id}`;
 
     setShareUrl(url);
 
     try {
       await navigator.clipboard.writeText(url);
-      setShareMessage('Setlist share link copied.');
+      setShareMessage('Copied!');
     } catch {
-      setShareMessage('Setlist share link ready.');
+      setShareMessage('Copy failed. Use the link below.');
     }
   }
 
@@ -683,9 +688,7 @@ export default function SetlistsPage() {
                       <section className="rounded-2xl border border-amber-950/25 bg-stone-950/50 p-4">
                         {shareMessage ? <p className="text-sm text-stone-300">{shareMessage}</p> : null}
                         {shareUrl ? (
-                          <a href={shareUrl} className="mt-2 block break-all text-sm text-amber-200">
-                            {shareUrl}
-                          </a>
+                          <input className={`${INPUT_CLASS} mt-2`} value={shareUrl} readOnly onFocus={(event) => event.target.select()} aria-label="Setlist share link" />
                         ) : null}
                       </section>
                     ) : null}

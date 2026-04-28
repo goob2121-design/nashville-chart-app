@@ -9,6 +9,7 @@ import {
   fetchCloudCharts,
   fetchCloudSetlists,
   getInitialCloudStatus,
+  isUuid,
   normalizeChartKey,
   updateCloudChartFavorite,
   upsertCloudChart,
@@ -453,14 +454,26 @@ export default function LibraryPage() {
   }
 
   async function handleShareChart(chart: SavedChart) {
-    const url = `${window.location.origin}/?chart=${encodeURIComponent(JSON.stringify(chart))}`;
+    if (!cloudStatus.connected) {
+      setShareUrl('');
+      setBackupMessage('Cloud sync is required for short share links.');
+      return;
+    }
+
+    if (!isUuid(chart.id)) {
+      setShareUrl('');
+      setBackupMessage('Save this chart to cloud before sharing.');
+      return;
+    }
+
+    const url = `${window.location.origin}/share/chart/${chart.id}`;
     setShareUrl(url);
 
     try {
       await navigator.clipboard.writeText(url);
-      setBackupMessage(`Share link copied for "${chartTitle(chart)}".`);
+      setBackupMessage('Copied!');
     } catch {
-      setBackupMessage(`Share link ready for "${chartTitle(chart)}".`);
+      setBackupMessage(`Copy failed. Use the link below for "${chartTitle(chart)}".`);
     }
   }
 
@@ -732,9 +745,7 @@ export default function LibraryPage() {
               {backupMessage ? <p className="text-sm text-stone-300">{backupMessage}</p> : null}
               {cloudMessage ? <p className="text-sm text-stone-300">{cloudMessage}</p> : null}
               {shareUrl ? (
-                <a href={shareUrl} className="block break-all text-sm text-amber-200">
-                  {shareUrl}
-                </a>
+                <input className={INPUT_CLASS} value={shareUrl} readOnly onFocus={(event) => event.target.select()} aria-label="Share link" />
               ) : null}
             </div>
           </div>

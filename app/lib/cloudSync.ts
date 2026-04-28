@@ -213,6 +213,24 @@ function cloudError(error: unknown) {
 
 const AUDIO_BUCKET = 'song-audio';
 
+export function getChartAudioPublicUrl(chart: Pick<SavedChart, 'audioPath' | 'audioUrl'>) {
+  if ((chart.audioUrl ?? '').trim()) {
+    return chart.audioUrl!.trim();
+  }
+
+  if (!(chart.audioPath ?? '').trim()) {
+    return '';
+  }
+
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return '';
+  }
+
+  return supabase.storage.from(AUDIO_BUCKET).getPublicUrl(chart.audioPath!.trim()).data.publicUrl;
+}
+
 function sanitizeAudioFileName(filename: string) {
   const withoutExtension = filename.replace(/\.mp3$/i, '');
   const safeBaseName = withoutExtension
@@ -296,6 +314,24 @@ export async function fetchCloudCharts() {
     favoriteIds: rows.filter((row) => row.is_favorite).map((row) => row.id),
     error: '',
   };
+}
+
+export async function fetchCloudChartById(id: string) {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return { chart: null as SavedChart | null, error: 'Missing Supabase env vars.' };
+  }
+
+  if (!isUuid(id)) {
+    return { chart: null as SavedChart | null, error: 'Invalid chart link.' };
+  }
+
+  const { data, error } = await supabase.from('charts').select('*').eq('id', id).single();
+
+  return error
+    ? { chart: null as SavedChart | null, error: cloudError(error) }
+    : { chart: rowToChart(data as ChartRow), error: '' };
 }
 
 export async function upsertCloudChart(chart: SavedChart, isFavorite = false) {
@@ -393,6 +429,55 @@ export async function fetchCloudSetlists() {
   return {
     setlists: rows.map((row) => rowToSetlist(row, itemsBySetlist.get(row.id) ?? [])),
     favoriteIds: rows.filter((row) => row.is_favorite).map((row) => row.id),
+    error: '',
+  };
+}
+
+export async function fetchCloudSetlistById(id: string) {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return { setlist: null as Setlist | null, charts: [] as SavedChart[], error: 'Missing Supabase env vars.' };
+  }
+
+  if (!isUuid(id)) {
+    return { setlist: null as Setlist | null, charts: [] as SavedChart[], error: 'Invalid setlist link.' };
+  }
+
+  const { data: setlistRow, error: setlistError } = await supabase.from('setlists').select('*').eq('id', id).single();
+
+  if (setlistError) {
+    return { setlist: null as Setlist | null, charts: [] as SavedChart[], error: cloudError(setlistError) };
+  }
+
+  const { data: itemRows, error: itemsError } = await supabase
+    .from('setlist_items')
+    .select('*')
+    .eq('setlist_id', id)
+    .order('position', { ascending: true });
+
+  if (itemsError) {
+    return { setlist: null as Setlist | null, charts: [] as SavedChart[], error: cloudError(itemsError) };
+  }
+
+  const songIds = ((itemRows ?? []) as SetlistItemRow[]).map((item) => item.chart_id);
+
+  if (!songIds.length) {
+    return { setlist: rowToSetlist(setlistRow as SetlistRow, []), charts: [] as SavedChart[], error: '' };
+  }
+
+  const { data: chartRows, error: chartsError } = await supabase.from('charts').select('*').in('id', songIds);
+
+  if (chartsError) {
+    return { setlist: null as Setlist | null, charts: [] as SavedChart[], error: cloudError(chartsError) };
+  }
+
+  const chartMap = new Map(((chartRows ?? []) as ChartRow[]).map((row) => [row.id, rowToChart(row)]));
+  const orderedCharts = songIds.map((songId) => chartMap.get(songId)).filter((chart): chart is SavedChart => Boolean(chart));
+
+  return {
+    setlist: rowToSetlist(setlistRow as SetlistRow, songIds),
+    charts: orderedCharts,
     error: '',
   };
 }

@@ -7,7 +7,7 @@ import {
   dedupeCharts,
   deleteCloudChart,
   fetchCloudCharts,
-  getSupabaseClient,
+  getChartAudioPublicUrl,
   getInitialCloudStatus,
   normalizeChartKey,
   removeChartAudioFile,
@@ -76,6 +76,8 @@ const FAVORITES_STORAGE_KEY = 'nashville-chart-builder:favorite-charts';
 const SETLISTS_STORAGE_KEY = 'nashville-chart-builder:setlists';
 const SYMBOL_TOOLBAR_STORAGE_KEY = 'nashville-chart-builder:symbol-toolbar-expanded';
 const SECTION_OPEN_STORAGE_KEY = 'nashville-chart-builder:section-open-state';
+const SYMBOL_CATEGORY_STORAGE_KEY = 'nashville-chart-builder:selected-symbol-category';
+const UI_MODE_STORAGE_KEY = 'nashville-chart-builder:ui-mode';
 
 const INPUT_CLASS =
   'w-full rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20';
@@ -257,6 +259,16 @@ const SYMBOL_CATEGORIES = {
     { label: '[Hold Last 1]', value: '[Hold Last 1]' },
     { label: '[Run Out]', value: '[Run Out]' },
     { label: '[Repeat to End]', value: '[Repeat to End]' },
+  ],
+  Bluegrass: [
+    { label: '[Turnaround]', value: '[Turnaround]' },
+    { label: '[Walk Up]', value: '[Walk Up]' },
+    { label: '[Mando Chop In]', value: '[Mando Chop In]' },
+    { label: '[Harmony In]', value: '[Harmony In]' },
+    { label: '[Kick on 5]', value: '[Kick on 5]' },
+    { label: '[Stop on 1]', value: '[Stop on 1]' },
+    { label: '[A Part]', value: '[A Part]' },
+    { label: '[B Part]', value: '[B Part]' },
   ],
   Rhythm: [
     { label: '[x2]', value: '[x2]' },
@@ -967,21 +979,7 @@ function savedChartLabel(chart: SavedChart) {
 }
 
 function resolveChartAudioDownloadUrl(chart: Pick<ChartSnapshot, 'audioPath' | 'audioUrl'>) {
-  if ((chart.audioUrl ?? '').trim()) {
-    return chart.audioUrl.trim();
-  }
-
-  if (!(chart.audioPath ?? '').trim()) {
-    return '';
-  }
-
-  const supabase = getSupabaseClient();
-
-  if (!supabase) {
-    return '';
-  }
-
-  return supabase.storage.from('song-audio').getPublicUrl(chart.audioPath.trim()).data.publicUrl;
+  return getChartAudioPublicUrl(chart);
 }
 
 function ChartLines({ text }: { text: string }) {
@@ -1199,6 +1197,10 @@ export default function Page() {
   const [copyLabel, setCopyLabel] = useState('Copy Chart');
   const [shareLabel, setShareLabel] = useState('Share View');
   const [shareUrl, setShareUrl] = useState('');
+  const [showManualShareUrl, setShowManualShareUrl] = useState(false);
+  const [saveLabel, setSaveLabel] = useState('Save Chart');
+  const [saveStatusMessage, setSaveStatusMessage] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [hasMounted, setHasMounted] = useState(false);
   const [savedCharts, setSavedCharts] = useState<SavedChart[]>([]);
   const [selectedSavedChartId, setSelectedSavedChartId] = useState('');
@@ -1228,6 +1230,8 @@ export default function Page() {
         const saved = window.localStorage.getItem(STORAGE_KEY);
         const storedToolbarPreference = window.localStorage.getItem(SYMBOL_TOOLBAR_STORAGE_KEY);
         const storedSectionState = window.localStorage.getItem(SECTION_OPEN_STORAGE_KEY);
+        const storedSymbolCategory = window.localStorage.getItem(SYMBOL_CATEGORY_STORAGE_KEY);
+        const storedUiMode = window.localStorage.getItem(UI_MODE_STORAGE_KEY);
 
         parsedSavedCharts = dedupeCharts(saved ? (JSON.parse(saved) as SavedChart[]) : []);
         setSavedCharts(parsedSavedCharts);
@@ -1243,6 +1247,14 @@ export default function Page() {
         if (storedSectionState) {
           const parsedSectionState = JSON.parse(storedSectionState) as Partial<SectionOpenState>;
           setSectionOpen({ ...DEFAULT_SECTION_OPEN_STATE, ...parsedSectionState });
+        }
+
+        if (storedSymbolCategory && storedSymbolCategory in SYMBOL_CATEGORIES) {
+          setSelectedSymbolCategory(storedSymbolCategory as SymbolCategory);
+        }
+
+        if (storedUiMode === 'quick' || storedUiMode === 'pro') {
+          setUiMode(storedUiMode);
         }
 
         if (getInitialCloudStatus().connected) {
@@ -1422,6 +1434,16 @@ export default function Page() {
     });
   }
 
+  function handleSetUiMode(mode: UiMode) {
+    setUiMode(mode);
+    window.localStorage.setItem(UI_MODE_STORAGE_KEY, mode);
+  }
+
+  function handleSetSymbolCategory(category: SymbolCategory) {
+    setSelectedSymbolCategory(category);
+    window.localStorage.setItem(SYMBOL_CATEGORY_STORAGE_KEY, category);
+  }
+
   function handleCleanUpInput() {
     setInput(normalizedInput);
   }
@@ -1505,15 +1527,29 @@ export default function Page() {
   }
 
   async function handleShareView() {
-    const url = `${window.location.origin}${window.location.pathname}?chart=${serializeChart(currentSnapshot())}`;
+    if (!cloudStatus.connected) {
+      setShareLabel('Cloud Required');
+      setCloudMessage('Cloud sync is required for short share links.');
+      return;
+    }
+
+    if (!currentChartId || !isUuid(currentChartId)) {
+      setShareLabel('Save to Cloud First');
+      setCloudMessage('Save this chart to cloud before sharing.');
+      return;
+    }
+
+    const url = `${window.location.origin}/share/chart/${currentChartId}`;
     setShareUrl(url);
+    setShowManualShareUrl(false);
 
     try {
       await navigator.clipboard.writeText(url);
-      setShareLabel('Link Copied');
+      setShareLabel('Copied!');
       window.setTimeout(() => setShareLabel('Share View'), 1600);
     } catch {
-      setShareLabel('Share Link Ready');
+      setShowManualShareUrl(true);
+      setShareLabel('Copy Failed');
       window.setTimeout(() => setShareLabel('Share View'), 1600);
     }
   }
@@ -1572,7 +1608,23 @@ export default function Page() {
   }
 
   async function handleSaveChart() {
-    await saveChartRecord();
+    setIsSaving(true);
+    setSaveLabel('Saving...');
+    setSaveStatusMessage('');
+
+    try {
+      const savedChart = await saveChartRecord();
+      const savedDate = new Date(savedChart.savedAt);
+      setSaveLabel('Saved ✓');
+      setSaveStatusMessage(Number.isNaN(savedDate.getTime()) ? 'Last saved just now' : `Last saved at ${savedDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+      window.setTimeout(() => setSaveLabel('Save Chart'), 1800);
+    } catch {
+      setSaveLabel('Save failed');
+      setSaveStatusMessage('Save failed. Try again.');
+      window.setTimeout(() => setSaveLabel('Save Chart'), 2200);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   async function handleUploadAudio(file: File | null) {
@@ -1869,14 +1921,14 @@ export default function Page() {
                   <button
                     type="button"
                     className={`rounded-xl px-4 py-2 text-sm font-medium transition ${uiMode === 'quick' ? 'bg-amber-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
-                    onClick={() => setUiMode('quick')}
+                    onClick={() => handleSetUiMode('quick')}
                   >
                     Quick Mode
                   </button>
                   <button
                     type="button"
                     className={`rounded-xl px-4 py-2 text-sm font-medium transition ${uiMode === 'pro' ? 'bg-emerald-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
-                    onClick={() => setUiMode('pro')}
+                    onClick={() => handleSetUiMode('pro')}
                   >
                     Pro Mode
                   </button>
@@ -2030,12 +2082,13 @@ export default function Page() {
                   <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={handleConvert}>
                     Convert
                   </button>
-                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>
-                    Save Chart
+                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart} disabled={isSaving}>
+                    {saveLabel}
                   </button>
                 </div>
 
                 {smartPasteMessage ? <p className="text-sm text-zinc-300">{smartPasteMessage}</p> : null}
+                {saveStatusMessage ? <p className="text-sm text-stone-300">{saveStatusMessage}</p> : null}
 
                 <p className="text-xs leading-5 text-stone-400">
                   Grid mode makes each measure/bar easier to see. A dot means hold the previous chord for one beat.
@@ -2080,7 +2133,7 @@ export default function Page() {
                 ) : null}
 
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>Save Chart</button>
+                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart} disabled={isSaving}>{saveLabel}</button>
                   {hasAttachedAudio ? (
                     <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200">
                       MP3 Attached
@@ -2098,12 +2151,28 @@ export default function Page() {
                     </a>
                   ) : null}
                   <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleCopyChart}>{copyLabel}</button>
+                  {cloudStatus.connected ? (
+                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareView}>
+                      {shareLabel}
+                    </button>
+                  ) : null}
                   <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
                   <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>Print Chart</button>
                 </div>
+                {saveStatusMessage ? <p className="text-sm text-stone-300">{saveStatusMessage}</p> : null}
                 {chartAudioDownloadUrl && audioFilename.trim() ? (
                   <p className="text-sm text-stone-400">MP3: {audioFilename}</p>
                 ) : null}
+                {shareUrl ? (
+                  showManualShareUrl ? (
+                    <input className={INPUT_CLASS} value={shareUrl} readOnly onFocus={(event) => event.target.select()} aria-label="Share link" />
+                  ) : (
+                    <a href={shareUrl} className="block break-all rounded-2xl border border-amber-950/30 bg-stone-950/60 px-4 py-3 text-sm text-stone-300">
+                      {shareUrl}
+                    </a>
+                  )
+                ) : null}
+                {!cloudStatus.connected ? <p className="text-sm text-stone-400">Cloud sync is required for short share links.</p> : null}
               </SectionCard>
 
               {!isQuickMode ? (
@@ -2114,17 +2183,25 @@ export default function Page() {
                   onToggle={() => handleToggleSection('library')}
                 >
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart}>Save Chart</button>
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareView}>
-                      {shareLabel}
-                    </button>
+                    <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleSaveChart} disabled={isSaving}>{saveLabel}</button>
+                    {cloudStatus.connected ? (
+                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleShareView}>
+                        {shareLabel}
+                      </button>
+                    ) : null}
                   </div>
+                  {saveStatusMessage ? <p className="text-sm text-stone-300">{saveStatusMessage}</p> : null}
 
                   {shareUrl ? (
-                    <a href={shareUrl} className="block break-all rounded-2xl border border-amber-950/30 bg-stone-950/60 px-4 py-3 text-sm text-stone-300">
-                      {shareUrl}
-                    </a>
+                    showManualShareUrl ? (
+                      <input className={INPUT_CLASS} value={shareUrl} readOnly onFocus={(event) => event.target.select()} aria-label="Share link" />
+                    ) : (
+                      <a href={shareUrl} className="block break-all rounded-2xl border border-amber-950/30 bg-stone-950/60 px-4 py-3 text-sm text-stone-300">
+                        {shareUrl}
+                      </a>
+                    )
                   ) : null}
+                  {!cloudStatus.connected ? <p className="text-sm text-stone-400">Cloud sync is required for short share links.</p> : null}
 
                   <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2299,22 +2376,16 @@ export default function Page() {
                       </div>
                       {symbolsExpanded ? (
                         <>
-                          <div className="flex gap-2 overflow-x-auto pb-1">
-                            {Object.keys(SYMBOL_CATEGORIES).map((category) => (
-                              <button
-                                key={category}
-                                type="button"
-                                className={`shrink-0 rounded-xl px-3 py-2 text-xs font-semibold transition ${
-                                  selectedSymbolCategory === category
-                                    ? 'bg-amber-400 text-stone-950'
-                                    : 'border border-amber-900/40 bg-stone-950/40 text-stone-100 hover:bg-stone-900/80'
-                                }`}
-                                onClick={() => setSelectedSymbolCategory(category as SymbolCategory)}
-                              >
-                                {category}
-                              </button>
-                            ))}
-                          </div>
+                          <label className="flex flex-col gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
+                            Category
+                            <select className={INPUT_CLASS} value={selectedSymbolCategory} onChange={(event) => handleSetSymbolCategory(event.target.value as SymbolCategory)}>
+                              {Object.keys(SYMBOL_CATEGORIES).map((category) => (
+                                <option key={category} value={category}>
+                                  {category}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2">
                             {SYMBOL_CATEGORIES[selectedSymbolCategory].map((symbol) => (
                               <button
