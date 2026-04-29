@@ -85,9 +85,14 @@ type AudioAnalysisSnapshot = {
   detectedSections?: AnalysisSection[];
   durationSeconds: number;
   estimatedBars: number | null;
+  fileName?: string;
   key: KeyName | null;
+  manualBpm?: string;
+  manualKey?: KeyName;
   sections: AnalysisSection[];
   status: AudioAnalysisStatus;
+  structureConfidence?: AnalysisConfidence;
+  tapTempoBpm?: number | null;
   timeSignature: TimeSignature | '';
 };
 
@@ -1069,6 +1074,10 @@ function structureSectionId(section: Pick<AnalysisSection, 'endSeconds' | 'start
   return `${index}-${Math.round(section.startSeconds)}-${Math.round(section.endSeconds)}`;
 }
 
+function structureTimingMatches(first: Pick<StructureChartSection | AnalysisSection, 'endSeconds' | 'startSeconds'>, second: Pick<StructureChartSection | AnalysisSection, 'endSeconds' | 'startSeconds'>) {
+  return Math.round(first.startSeconds) === Math.round(second.startSeconds) && Math.round(first.endSeconds) === Math.round(second.endSeconds);
+}
+
 function normalizeStructureCells(cells: string[] | undefined, bars: number) {
   return Array.from({ length: bars }, (_, index) => cells?.[index] ?? '');
 }
@@ -1101,6 +1110,7 @@ function buildStructureChartSections(sections: AnalysisSection[], existingSectio
     const bars = Math.max(1, Math.min(64, (section.bars ?? Math.round(section.durationSeconds / 4)) || 4));
     const id = structureSectionId(section, index);
     const existing =
+      existingSections.find((builderSection) => structureTimingMatches(builderSection, section)) ??
       existingSections.find((builderSection) => builderSection.id === id) ??
       existingSections[index] ??
       existingSections.find((builderSection) => builderSection.label === section.label);
@@ -1762,10 +1772,9 @@ export default function Page() {
   const analysisDisplayBars = estimateBarsFromDuration(analysisDurationSeconds, estimatedBpm, analysisDisplayTimeSignature) ?? estimatedBars;
   const analysisStructureConfidence = getAnalysisStructureConfidence(analysisSections);
   const hasLikelyAabbPattern = isLikelyAabbPattern(analysisSections);
-  const isStructureBuilderFocus = Boolean(structureChartBuilderExpanded && structureChartSections.length);
 
   function currentAudioAnalysisSnapshot(): AudioAnalysisSnapshot | null {
-    if (!estimatedBpm && !estimatedKey && !analysisDurationSeconds && !estimatedBars && !analysisSections.length && !structureChartSections.length) {
+    if (!estimatedBpm && !estimatedKey && !analysisDurationSeconds && !estimatedBars && !analysisSections.length && !structureChartSections.length && !analysisFileName) {
       return null;
     }
 
@@ -1775,9 +1784,14 @@ export default function Page() {
       detectedSections: detectedAnalysisSections,
       durationSeconds: analysisDurationSeconds,
       estimatedBars,
+      fileName: analysisFileName,
       key: estimatedKey,
+      manualBpm: analysisBpm,
+      manualKey: analysisKey,
       sections: analysisSections,
       status: analysisStatus,
+      structureConfidence: analysisStructureConfidence,
+      tapTempoBpm,
       timeSignature: analysisTimeSignature,
     };
   }
@@ -1837,7 +1851,7 @@ export default function Page() {
 
     setAnalysisFile(null);
     setAnalysisBuffer(null);
-    setAnalysisFileName('');
+    setAnalysisFileName(snapshot.fileName ?? '');
     setAnalysisBuffer(null);
     setAnalysisAudioUrl('');
     setEstimatedBpm(snapshot.bpm);
@@ -1849,12 +1863,12 @@ export default function Page() {
     setAnalysisSections(restoredSections);
     setDetectedAnalysisSections(restoredDetectedSections);
     setStructureChartSections(buildStructureChartSections(restoredSections, snapshot.chartBuilderSections ?? []));
-    setAnalysisBpm(snapshot.bpm ? String(snapshot.bpm) : '');
-    setAnalysisKey(snapshot.key ?? fallbackKey);
+    setAnalysisBpm(snapshot.manualBpm ?? (snapshot.bpm ? String(snapshot.bpm) : ''));
+    setAnalysisKey(snapshot.manualKey ?? snapshot.key ?? fallbackKey);
     setAnalysisTimeSignature(snapshot.timeSignature);
     setAnalysisStatus(snapshot.status);
     setTapTimes([]);
-    setTapTempoBpm(null);
+    setTapTempoBpm(snapshot.tapTempoBpm ?? null);
     setStructureChartMessage(snapshot.chartBuilderSections?.length ? 'Structure chart builder restored with this chart.' : '');
   }
 
@@ -2280,6 +2294,26 @@ export default function Page() {
 
   function handleDeleteAnalysisSection(index: number) {
     setAnalysisSections((sections) => sections.filter((_, sectionIndex) => sectionIndex !== index));
+  }
+
+  function handleMoveAnalysisSection(index: number, direction: -1 | 1) {
+    setAnalysisSections((sections) => {
+      const nextIndex = index + direction;
+
+      if (nextIndex < 0 || nextIndex >= sections.length) {
+        return sections;
+      }
+
+      const nextSections = [...sections];
+      const [movedSection] = nextSections.splice(index, 1);
+
+      if (!movedSection) {
+        return sections;
+      }
+
+      nextSections.splice(nextIndex, 0, movedSection);
+      return nextSections;
+    });
   }
 
   function handleAddAnalysisSection() {
@@ -2865,7 +2899,7 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="grid gap-6 print:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(420px,500px)] 2xl:grid-cols-[minmax(0,1fr)_520px]">
+          <div className="grid gap-6 print:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(620px,700px)] 2xl:grid-cols-[minmax(0,1fr)_740px]">
             <section className={`no-print order-1 space-y-5 ${PANEL_CLASS}`}>
               <SectionCard
                 title="Song Setup"
@@ -3388,10 +3422,10 @@ export default function Page() {
                                 </button>
                                 {audioStructureExpanded ? (
                                   <>
-                                    <div className="space-y-2 text-xs text-stone-300">
+                                    <div className="space-y-1.5 text-xs text-stone-300">
                                       {analysisSections.map((section, index) => (
-                                        <div key={`${section.startSeconds}-${section.endSeconds}-${section.label}-${index}`} className="space-y-2 rounded-lg border border-emerald-900/20 bg-black/15 p-2">
-                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div key={`${section.startSeconds}-${section.endSeconds}-${section.label}-${index}`} className="rounded-lg border border-emerald-900/20 bg-black/15 p-2">
+                                          <div className="flex flex-wrap items-center gap-2">
                                             <button
                                               type="button"
                                               className="text-left text-emerald-100 underline decoration-emerald-700 underline-offset-4"
@@ -3402,10 +3436,21 @@ export default function Page() {
                                             <span className="text-[10px] uppercase tracking-[0.14em] text-stone-500">
                                               {section.bars ? `approx. ${section.bars} bars` : 'bars N/A'} - {section.confidence}
                                             </span>
+                                            <div className="ml-auto flex gap-1">
+                                              <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`} onClick={() => handleMoveAnalysisSection(index, -1)} disabled={index === 0}>
+                                                ↑
+                                              </button>
+                                              <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`} onClick={() => handleMoveAnalysisSection(index, 1)} disabled={index === analysisSections.length - 1}>
+                                                ↓
+                                              </button>
+                                              <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`} onClick={() => handleDeleteAnalysisSection(index)}>
+                                                Delete
+                                              </button>
+                                            </div>
                                           </div>
-                                          <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
-                                            <label className="flex min-w-0 flex-col gap-1">
-                                              Label
+                                          <div className="mt-2">
+                                            <label className="flex min-w-0 flex-col gap-1 text-[10px] uppercase tracking-[0.12em] text-stone-500">
+                                              Section label
                                               <select
                                                 className={`${INPUT_CLASS} py-2 text-sm`}
                                                 value={STRUCTURE_LABELS.includes(section.label as (typeof STRUCTURE_LABELS)[number]) ? section.label : 'Section A'}
@@ -3419,28 +3464,7 @@ export default function Page() {
                                                 ))}
                                               </select>
                                             </label>
-                                            <label className="flex min-w-0 flex-col gap-1">
-                                              Start
-                                              <input
-                                                className={`${INPUT_CLASS} py-2 text-sm`}
-                                                value={formatDuration(section.startSeconds)}
-                                                onChange={(event) => handleUpdateAnalysisSectionTime(index, 'startSeconds', event.target.value)}
-                                                aria-label={`Section start at ${formatDuration(section.startSeconds)}`}
-                                              />
-                                            </label>
-                                            <label className="flex min-w-0 flex-col gap-1">
-                                              End
-                                              <input
-                                                className={`${INPUT_CLASS} py-2 text-sm`}
-                                                value={formatDuration(section.endSeconds)}
-                                                onChange={(event) => handleUpdateAnalysisSectionTime(index, 'endSeconds', event.target.value)}
-                                                aria-label={`Section end at ${formatDuration(section.endSeconds)}`}
-                                              />
-                                            </label>
                                           </div>
-                                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleDeleteAnalysisSection(index)}>
-                                            Delete Section
-                                          </button>
                                         </div>
                                       ))}
                                     </div>
@@ -3510,12 +3534,12 @@ export default function Page() {
                                             </div>
                                             <div className="space-y-3">
                                               {normalizeStructureRows(section.rows, section.cells, section.bars).map((row, rowIndex) => (
-                                                <div key={`${section.id}-row-${rowIndex}`} className="space-y-2 rounded-xl border border-amber-950/20 bg-stone-950/35 p-2.5">
+                                                <div key={`${section.id}-row-${rowIndex}`} className="space-y-1.5 rounded-xl border border-amber-950/20 bg-stone-950/35 p-2">
                                                   <div className="flex flex-wrap gap-2">
                                                     {row.map((cell, cellIndex) => (
                                                       <input
                                                         key={`${section.id}-${rowIndex}-${cellIndex}`}
-                                                        className="h-12 min-w-[4.75rem] flex-1 rounded-xl border border-amber-950/35 bg-stone-950/75 px-3 py-2 text-center font-mono text-base font-bold text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                                                        className="h-11 min-w-[3.5rem] flex-1 rounded-xl border border-amber-950/35 bg-stone-950/75 px-2 py-2 text-center font-mono text-base font-bold text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
                                                         value={cell}
                                                         onChange={(event) => handleUpdateStructureChartCell(sectionIndex, rowIndex, cellIndex, event.target.value)}
                                                         placeholder=" "
@@ -3523,22 +3547,22 @@ export default function Page() {
                                                       />
                                                     ))}
                                                   </div>
-                                                  <div className="flex flex-wrap gap-1.5">
+                                                  <div className="flex flex-nowrap gap-1.5 overflow-x-auto">
                                                     <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleAddStructureBar(sectionIndex, rowIndex)}>
-                                                      Add bar to this row
+                                                      Add bar
                                                     </button>
                                                     <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleRemoveStructureBar(sectionIndex, rowIndex)} disabled={row.length <= 1}>
-                                                      Remove bar from this row
+                                                      Remove bar
                                                     </button>
                                                     <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleRemoveStructureRow(sectionIndex, rowIndex)} disabled={normalizeStructureRows(section.rows, section.cells, section.bars).length <= 1}>
                                                       Remove row
                                                     </button>
+                                                    <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleAddStructureRow(sectionIndex)}>
+                                                      Add new row
+                                                    </button>
                                                   </div>
                                                 </div>
                                               ))}
-                                              <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleAddStructureRow(sectionIndex)}>
-                                                Add new row
-                                              </button>
                                             </div>
                                           </div>
                                         );
@@ -3590,7 +3614,7 @@ export default function Page() {
                         ) : analysisFileName ? (
                           <p className="truncate text-xs text-stone-400">File: {analysisFileName}</p>
                         ) : null}
-                        <div className={`grid gap-3 sm:grid-cols-3 xl:grid-cols-1 ${isStructureBuilderFocus ? 'hidden' : ''}`}>
+                        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
                           <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
                             Manual BPM
                             <input className={INPUT_CLASS} inputMode="numeric" placeholder="120" value={analysisBpm} onChange={(event) => setAnalysisBpm(event.target.value)} />
@@ -3618,7 +3642,7 @@ export default function Page() {
                           </label>
                         </div>
 
-                        <button type="button" className={`${EMPHASIS_BUTTON_CLASS} ${isStructureBuilderFocus ? 'hidden' : ''}`} onClick={handleApplyAudioAnalysis}>
+                        <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleApplyAudioAnalysis}>
                           Apply Manual Values
                         </button>
                       </div>
@@ -3626,7 +3650,7 @@ export default function Page() {
                   </section>
                 ) : null}
 
-                {!isQuickMode && !isStructureBuilderFocus ? <section className={`${SUBPANEL_CLASS} no-print`}>
+                {!isQuickMode ? <section className={`${SUBPANEL_CLASS} no-print`}>
                   <div className="space-y-1">
                     <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Symbols & Advanced Tools</h4>
                     <p className="text-xs text-stone-400">Insert chart shorthand and section tags into the active editor.</p>
@@ -3676,7 +3700,7 @@ export default function Page() {
                   </div>
                 </section> : null}
 
-                {!isQuickMode && !isStructureBuilderFocus ? (
+                {!isQuickMode ? (
                   <section className={`${SUBPANEL_CLASS} no-print`}>
                     <div className="space-y-1">
                       <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Notes</h4>
@@ -3691,7 +3715,7 @@ export default function Page() {
                   </section>
                 ) : null}
 
-                {!isQuickMode && !isStructureBuilderFocus ? <section className={`${SUBPANEL_CLASS} no-print`}>
+                {!isQuickMode ? <section className={`${SUBPANEL_CLASS} no-print`}>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1">
                       <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Advanced Settings</h4>
