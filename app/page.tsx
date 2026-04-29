@@ -3,6 +3,13 @@
 import Link from 'next/link';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { AuthGate, BrandHeaderTitle } from './components/AuthGate';
+import PrintableChartView, { buildPrintChartHref, PRINT_ACTION_BUTTON_CLASS } from './components/PrintableChartView';
+import {
+  createSectionSeparator,
+  deserializePrintableChart,
+  isReferenceTag,
+  type PrintableChartData,
+} from './lib/chartPrint';
 import {
   dedupeCharts,
   deleteCloudChart,
@@ -1068,18 +1075,6 @@ function transposeChartText(input: string, fromKey: KeyName, toKey: KeyName, cha
     .join('\n');
 }
 
-function serializeChart(chart: ChartSnapshot) {
-  return encodeURIComponent(JSON.stringify(chart));
-}
-
-function deserializeChart(value: string) {
-  try {
-    return JSON.parse(decodeURIComponent(value)) as ChartSnapshot;
-  } catch {
-    return null;
-  }
-}
-
 function getPlayInKey(concertKey: KeyName, capo: string) {
   const capoValue = Number.parseInt(capo, 10);
 
@@ -1090,17 +1085,6 @@ function getPlayInKey(concertKey: KeyName, capo: string) {
   const names = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
   const concertSemitone = NOTE_TO_SEMITONE[concertKey];
   return names[(concertSemitone - (capoValue % 12) + 12) % 12];
-}
-
-function createSectionSeparator(line: string): string {
-  const bracketMatch = line.match(/^\[(.+)\]$/);
-  return bracketMatch ? `--- ${bracketMatch[1]} ---` : line;
-}
-
-function isReferenceTag(line: string) {
-  return /^\[(?:Same as .+|V2 = V1|V3 = V1|Ch2 = Ch1|Solo = Verse|Break = Chorus|Outro = Intro|Outro = Chorus Tag|Last Line Chorus|Last 2 Lines Chorus|Verse Chords|Chorus Chords|Kick on 5|Stop on 1|Build|Half-time|Walk Up|N\.C\.|Cold End|Fade|Hold Last 1|Run Out|Repeat to End|x2|x3|Kickoff|Full Band Kickoff|Banjo Kickoff|Guitar Kickoff|Mandolin Kickoff|Fiddle Kickoff|Dobro Kickoff|Banjo Break|Guitar Break|Mandolin Break|Fiddle Break|Dobro Break|Bass Break|Instrumental Break|Dobro Solo|Mando Chop In|Harmony In|Tag Last Line|Tag Last Line x2|Tag Chorus|Tag Chorus x2|Tag Last Line Chorus|Tag Last Line Chorus x2)\]$/i.test(
-    line.trim()
-  );
 }
 
 function buildSnapshot(values: {
@@ -1135,6 +1119,27 @@ function buildSnapshot(values: {
     timeSignature: values.timeSignature,
     title: values.title,
   };
+}
+
+function toChartSnapshot(chart: PrintableChartData): ChartSnapshot {
+  return buildSnapshot({
+    audioFilename: chart.audioFilename ?? '',
+    audioPath: chart.audioPath ?? '',
+    audioUrl: chart.audioUrl ?? '',
+    artist: chart.artist ?? '',
+    capo: chart.capo ?? SAMPLE_CHART.capo,
+    chartMode: chart.chartMode === 'strict' ? 'strict' : 'simple',
+    chordChart: chart.chordChart ?? '',
+    feel: chart.feel ?? SAMPLE_CHART.feel,
+    key: MAJOR_KEYS.includes(chart.key as KeyName) ? (chart.key as KeyName) : SAMPLE_CHART.key,
+    nashvilleChart: chart.nashvilleChart ?? '',
+    notes: chart.notes ?? '',
+    tempo: chart.tempo ?? SAMPLE_CHART.tempo,
+    timeSignature: TIME_SIGNATURES.includes(chart.timeSignature as TimeSignature)
+      ? (chart.timeSignature as TimeSignature)
+      : SAMPLE_CHART.timeSignature,
+    title: chart.title ?? '',
+  });
 }
 
 function normalizeSavedChart(chart: CloudSavedChart): SavedChart {
@@ -1202,136 +1207,18 @@ function ShareView({
   onExit?: () => void;
   onPerformanceMode: () => void;
 }) {
-  const readOnlyChart = chart.nashvilleChart.trim()
-    ? chart.nashvilleChart
-    : chart.chordChart.trim()
-      ? chart.chordChart
-      : 'No chart entered.';
-  const downloadAudioUrl = resolveChartAudioDownloadUrl(chart);
-
   return (
-    <main className="min-h-screen bg-zinc-950 px-4 py-8 text-zinc-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
-      <style jsx global>{`
-        .print-only {
-          display: none;
-        }
-
-        @media print {
-          .no-print {
-            display: none !important;
-          }
-
-          .print-only {
-            display: block !important;
-          }
-
-          .print-chart-text {
-            white-space: pre-wrap;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-size: 16pt;
-            line-height: 1.3;
-          }
-        }
-      `}</style>
-
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
-        <div className="no-print flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-zinc-500">Share View</p>
-            <h1 className="text-2xl font-semibold text-white">{chart.title || 'Untitled Song'}</h1>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
-              onClick={() => window.print()}
-            >
-              Print
-            </button>
-            <button
-              type="button"
-              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
-              onClick={onPerformanceMode}
-            >
-              Performance Mode
-            </button>
-            {downloadAudioUrl ? (
-              <>
-                <a
-                  href={downloadAudioUrl}
-                  download={chart.audioFilename ?? undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
-                >
-                  Download MP3
-                </a>
-                {chart.audioFilename?.trim() ? <p className="text-xs text-zinc-400">{chart.audioFilename}</p> : null}
-              </>
-            ) : null}
-            {onExit ? (
-              <button
-                type="button"
-                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
-                onClick={onExit}
-              >
-                Open Editor
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <section className="rounded-3xl border border-zinc-800 bg-black/70 p-6 shadow-xl shadow-black/20 print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none">
-          <div className="space-y-3 border-b border-zinc-800 pb-4 print:hidden print:border-zinc-300">
-            <h2 className="text-3xl font-semibold text-white print:text-black">
-              {chart.title || 'Untitled Song'}
-            </h2>
-            <div className="grid gap-2 text-sm text-zinc-300 sm:grid-cols-2 lg:grid-cols-4 print:text-black">
-              <p><span className="font-medium text-zinc-100 print:text-black">Artist:</span> {chart.artist || 'N/A'}</p>
-              <p><span className="font-medium text-zinc-100 print:text-black">Concert Key:</span> {chart.key}</p>
-              <p><span className="font-medium text-zinc-100 print:text-black">Time:</span> {chart.timeSignature}</p>
-              <p><span className="font-medium text-zinc-100 print:text-black">Style:</span> {chart.chartMode === 'simple' ? 'Simple Bluegrass Mode' : 'Strict Nashville Mode'}</p>
-              <p><span className="font-medium text-zinc-100 print:text-black">Tempo:</span> {chart.tempo || 'N/A'}</p>
-              <p><span className="font-medium text-zinc-100 print:text-black">Capo:</span> {chart.capo || '0'}</p>
-              <p><span className="font-medium text-zinc-100 print:text-black">Play In:</span> {getPlayInKey(chart.key, chart.capo)}</p>
-              <p><span className="font-medium text-zinc-100 print:text-black">Feel:</span> {chart.feel || 'N/A'}</p>
-            </div>
-          </div>
-
-          <div className="print-only border-b border-zinc-300 pb-2 text-black">
-            <h2 className="text-xl font-semibold">{chart.title || 'Untitled Song'}</h2>
-            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm leading-5">
-              {chart.artist.trim() ? <p><span className="font-semibold">Artist:</span> {chart.artist}</p> : null}
-              <p><span className="font-semibold">Key:</span> {chart.key}</p>
-              {chart.timeSignature.trim() ? <p><span className="font-semibold">Time:</span> {chart.timeSignature}</p> : null}
-              {chart.tempo.trim() ? <p><span className="font-semibold">Tempo:</span> {chart.tempo}</p> : null}
-              {chart.capo.trim() ? <p><span className="font-semibold">Capo:</span> {chart.capo}</p> : null}
-            </div>
-          </div>
-
-          {chart.notes.trim() ? (
-            <section className="mt-5 space-y-2 print:mt-2">
-              <h3 className="text-sm font-medium uppercase tracking-[0.2em] text-zinc-400 print:text-black">Notes</h3>
-              <p className="whitespace-pre-wrap text-sm leading-7 text-zinc-200 print:leading-5 print:text-black">{chart.notes}</p>
-            </section>
-          ) : null}
-
-          {chart.chordChart.trim() ? (
-            <section className="mt-5 space-y-2 print:hidden print:mt-4">
-              <h3 className="text-sm font-medium uppercase tracking-[0.2em] text-zinc-400 print:text-black">Chord Chart</h3>
-              <pre className="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-4 font-mono text-base leading-7 text-zinc-100 print:border-0 print:bg-white print:px-0 print:py-0 print:text-black">{chart.chordChart}</pre>
-            </section>
-          ) : null}
-
-          <section className="mt-5 space-y-2 print:mt-2">
-            <h3 className="text-sm font-medium uppercase tracking-[0.2em] text-zinc-400 print:hidden print:text-black">Nashville Chart</h3>
-            <div className="print-chart-text overflow-x-auto whitespace-pre-wrap rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-4 font-mono text-lg leading-8 text-emerald-300 print:border-0 print:bg-white print:px-0 print:py-0 print:text-black">
-              <ChartLines text={readOnlyChart} />
-            </div>
-          </section>
-        </section>
-      </div>
-    </main>
+    <PrintableChartView
+      chart={chart}
+      extraActions={
+        <button type="button" className={PRINT_ACTION_BUTTON_CLASS} onClick={onExit ?? onPerformanceMode}>
+          {onExit ? 'Open Editor' : 'Performance Mode'}
+        </button>
+      }
+      heading="Share View"
+      homeHref={onExit ? undefined : '/'}
+      homeLabel="Open App"
+    />
   );
 }
 
@@ -1514,13 +1401,13 @@ export default function Page() {
         return;
       }
 
-      const decoded = deserializeChart(sharedChart);
+      const decoded = deserializePrintableChart(sharedChart);
 
       if (!decoded) {
         return;
       }
 
-      applySnapshot(decoded);
+      applySnapshot(toChartSnapshot(decoded));
       setCurrentChartId(null);
       setIsShareView(true);
       };
@@ -2085,6 +1972,10 @@ export default function Page() {
     }
   }
 
+  function handleOpenPrintView() {
+    window.open(buildPrintChartHref(currentSnapshot()), '_blank', 'noopener,noreferrer');
+  }
+
   function handleInsertSymbol(symbol: string) {
     const shouldUseInput = activeTextarea === 'input';
     const textarea = shouldUseInput ? inputRef.current : outputRef.current ?? inputRef.current;
@@ -2538,7 +2429,7 @@ export default function Page() {
                     </button>
                   ) : null}
                   <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
-                  <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => window.print()}>Print Chart</button>
+                  <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={handleOpenPrintView}>Print / PDF</button>
                 </div>
                 {saveStatusMessage ? <p className="text-sm text-stone-300">{saveStatusMessage}</p> : null}
                 {chartAudioDownloadUrl && audioFilename.trim() ? (

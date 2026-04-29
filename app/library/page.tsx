@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { AuthGate, BrandHeaderTitle } from '../components/AuthGate';
+import { buildPrintChartHref } from '../components/PrintableChartView';
 import {
   dedupeCharts,
   deleteCloudChart,
@@ -203,6 +204,7 @@ function ChartCard({
   onDelete,
   onDuplicate,
   onOpen,
+  onPrint,
   onShare,
   onToggleFavorite,
 }: {
@@ -211,6 +213,7 @@ function ChartCard({
   onDelete: (chart: SavedChart) => void;
   onDuplicate: (chart: SavedChart) => void;
   onOpen: (chart: SavedChart) => void;
+  onPrint: (chart: SavedChart) => void;
   onShare: (chart: SavedChart) => void;
   onToggleFavorite: (chart: SavedChart) => void;
 }) {
@@ -267,6 +270,9 @@ function ChartCard({
           </button>
           <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => onShare(chart)}>
             Share Link
+          </button>
+          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => onPrint(chart)}>
+            Print / PDF
           </button>
           <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => onDuplicate(chart)}>
             Duplicate
@@ -451,6 +457,10 @@ export default function LibraryPage() {
 
   function handleOpenChart(chart: SavedChart) {
     window.location.href = `/?openChart=${encodeURIComponent(chart.id)}`;
+  }
+
+  function handlePrintChart(chart: SavedChart) {
+    window.open(buildPrintChartHref(chart), '_blank', 'noopener,noreferrer');
   }
 
   async function handleShareChart(chart: SavedChart) {
@@ -686,6 +696,7 @@ export default function LibraryPage() {
         onDelete={handleDeleteChart}
         onDuplicate={handleDuplicateChart}
         onOpen={handleOpenChart}
+        onPrint={handlePrintChart}
         onShare={handleShareChart}
         onToggleFavorite={handleToggleFavorite}
       />
