@@ -80,6 +80,7 @@ const SECTION_OPEN_STORAGE_KEY = 'nashville-chart-builder:section-open-state';
 const SYMBOL_CATEGORY_STORAGE_KEY = 'nashville-chart-builder:selected-symbol-category';
 const UI_MODE_STORAGE_KEY = 'nashville-chart-builder:ui-mode';
 const STARTER_TEMPLATE_STORAGE_KEY = 'nashville-chart-builder:starter-template';
+const AUDIO_ANALYZE_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:audio-analyze-expanded';
 
 const INPUT_CLASS =
   'w-full rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20';
@@ -93,6 +94,9 @@ const PRIMARY_BUTTON_CLASS =
   'rounded-xl bg-amber-400 px-4 py-3 text-sm font-semibold text-stone-950 transition hover:bg-amber-300';
 const EMPHASIS_BUTTON_CLASS =
   'rounded-xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-stone-950 transition hover:bg-emerald-300';
+
+const TIME_SIGNATURE_QUICK_CHOICES: TimeSignature[] = ['2/4', '3/4', '4/4', '6/8'];
+const FEEL_QUICK_CHOICES = ['Straight', 'Swing', 'Shuffle', 'Waltz'] as const;
 
 const DEFAULT_SECTION_OPEN_STATE: SectionOpenState = {
   songSetup: true,
@@ -1431,6 +1435,7 @@ export default function Page() {
         const storedSymbolCategory = window.localStorage.getItem(SYMBOL_CATEGORY_STORAGE_KEY);
         const storedUiMode = window.localStorage.getItem(UI_MODE_STORAGE_KEY);
         const storedStarterTemplate = window.localStorage.getItem(STARTER_TEMPLATE_STORAGE_KEY);
+        const storedAudioAnalyzeExpanded = window.localStorage.getItem(AUDIO_ANALYZE_EXPANDED_STORAGE_KEY);
 
         parsedSavedCharts = dedupeCharts(saved ? (JSON.parse(saved) as SavedChart[]) : []);
         setSavedCharts(parsedSavedCharts);
@@ -1458,6 +1463,10 @@ export default function Page() {
 
         if (storedStarterTemplate && storedStarterTemplate in STARTER_TEMPLATES) {
           setSelectedStarterTemplate(storedStarterTemplate as StarterTemplateName);
+        }
+
+        if (storedAudioAnalyzeExpanded === 'true' || storedAudioAnalyzeExpanded === 'false') {
+          setAudioAnalyzeExpanded(storedAudioAnalyzeExpanded === 'true');
         }
 
         if (getInitialCloudStatus().connected) {
@@ -1645,6 +1654,14 @@ export default function Page() {
   function handleSetSymbolCategory(category: SymbolCategory) {
     setSelectedSymbolCategory(category);
     window.localStorage.setItem(SYMBOL_CATEGORY_STORAGE_KEY, category);
+  }
+
+  function handleToggleAudioAnalyzeExpanded() {
+    setAudioAnalyzeExpanded((current) => {
+      const next = !current;
+      window.localStorage.setItem(AUDIO_ANALYZE_EXPANDED_STORAGE_KEY, String(next));
+      return next;
+    });
   }
 
   function handleAudioAnalysisFile(file: File | null) {
@@ -2314,6 +2331,26 @@ export default function Page() {
                   ) : null}
                 </div>
 
+                <div className="flex flex-wrap gap-2">
+                  {TIME_SIGNATURE_QUICK_CHOICES.map((signature) => (
+                    <button
+                      key={signature}
+                      type="button"
+                      className={`${SECONDARY_BUTTON_CLASS} ${timeSignature === signature ? 'border-amber-400 bg-amber-500/10 text-amber-100' : ''}`}
+                      onClick={() => setTimeSignature(signature)}
+                    >
+                      {signature}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className={`${SECONDARY_BUTTON_CLASS} ${timeSignature === 'Cut Time' ? 'border-amber-400 bg-amber-500/10 text-amber-100' : ''}`}
+                    onClick={() => setTimeSignature('Cut Time')}
+                  >
+                    Cut Time
+                  </button>
+                </div>
+
                 {!isQuickMode ? (
                   <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
                     <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
@@ -2351,6 +2388,21 @@ export default function Page() {
                         <span className="font-medium text-amber-100">Play In:</span> {playInKey}
                       </p>
                     </div>
+                  </div>
+                ) : null}
+
+                {!isQuickMode ? (
+                  <div className="flex flex-wrap gap-2">
+                    {FEEL_QUICK_CHOICES.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className={`${SECONDARY_BUTTON_CLASS} ${feel === option ? 'border-amber-400 bg-amber-500/10 text-amber-100' : ''}`}
+                        onClick={() => setFeel(option)}
+                      >
+                        {option}
+                      </button>
+                    ))}
                   </div>
                 ) : null}
               </SectionCard>
@@ -2741,7 +2793,7 @@ export default function Page() {
                           <h4 className="text-sm font-medium text-zinc-200">Audio Analyze</h4>
                           <p className="text-xs text-stone-400">Audio analysis is experimental. Review results by ear.</p>
                         </div>
-                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => setAudioAnalyzeExpanded((current) => !current)}>
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleToggleAudioAnalyzeExpanded}>
                           {audioAnalyzeExpanded ? 'Hide' : 'Show'}
                         </button>
                       </div>
