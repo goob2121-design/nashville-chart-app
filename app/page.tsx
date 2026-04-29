@@ -54,10 +54,47 @@ type MeasureGridStyle = 'off' | 'simple-bars' | 'beat-dots';
 type UiMode = 'quick' | 'pro';
 type ActiveTextarea = 'input' | 'output';
 type AudioAnalysisStatus = 'Waiting for file' | 'Analyzing...' | 'Analysis complete' | 'Analysis failed';
+type AnalysisConfidence = 'High' | 'Medium' | 'Low';
 type SectionId = 'songSetup' | 'chartBuilder' | 'output' | 'advanced' | 'library';
 type SectionOpenState = Record<SectionId, boolean>;
 
+type AnalysisSection = {
+  bars: number | null;
+  confidence: AnalysisConfidence;
+  durationSeconds: number;
+  endSeconds: number;
+  energy: number;
+  label: string;
+  shape: number[];
+  startSeconds: number;
+};
+
+type StructureChartSection = {
+  bars: number;
+  cells: string[];
+  endSeconds: number;
+  id: string;
+  label: string;
+  rows?: string[][];
+  startSeconds: number;
+};
+
+type AudioAnalysisSnapshot = {
+  bpm: number | null;
+  chartBuilderSections?: StructureChartSection[];
+  detectedSections?: AnalysisSection[];
+  durationSeconds: number;
+  estimatedBars: number | null;
+  key: KeyName | null;
+  sections: AnalysisSection[];
+  status: AudioAnalysisStatus;
+  timeSignature: TimeSignature | '';
+};
+
+const STRUCTURE_LABELS = ['Intro', 'Verse', 'Chorus', 'Solo / Break', 'Bridge', 'Tag', 'Outro', 'Section A', 'Section B', 'Section C'] as const;
+
 type ChartSnapshot = {
+  audioAnalysis?: AudioAnalysisSnapshot | null;
   audioFilename: string;
   audioPath: string;
   audioUrl: string;
@@ -87,6 +124,8 @@ const SECTION_OPEN_STORAGE_KEY = 'nashville-chart-builder:section-open-state';
 const SYMBOL_CATEGORY_STORAGE_KEY = 'nashville-chart-builder:selected-symbol-category';
 const UI_MODE_STORAGE_KEY = 'nashville-chart-builder:ui-mode';
 const AUDIO_ANALYZE_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:audio-analyze-expanded';
+const AUDIO_STRUCTURE_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:audio-structure-expanded';
+const STRUCTURE_CHART_BUILDER_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:structure-chart-builder-expanded';
 
 const INPUT_CLASS =
   'w-full rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20';
@@ -842,6 +881,310 @@ function estimateKeyFromAudioBuffer(buffer: AudioBuffer): KeyName | null {
   return bestKey;
 }
 
+function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return '0:00';
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${remainingSeconds}`;
+}
+
+function parseDurationInput(value: string) {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d+):([0-5]?\d)$/);
+
+  if (match) {
+    return Number(match[1]) * 60 + Number(match[2]);
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+
+  return null;
+}
+
+function beatsPerBar(signature: TimeSignature) {
+  if (signature === '2/4') return 2;
+  if (signature === '3/4') return 3;
+  if (signature === '6/8') return 2;
+  if (signature === 'Cut Time') return 2;
+  return 4;
+}
+
+function estimateBarsFromDuration(durationSeconds: number, bpm: number | null, signature: TimeSignature) {
+  if (!bpm || bpm <= 0 || durationSeconds <= 0) {
+    return null;
+  }
+
+  const secondsPerBar = (60 / bpm) * beatsPerBar(signature);
+  return secondsPerBar > 0 ? Math.max(1, Math.round(durationSeconds / secondsPerBar)) : null;
+}
+
+function sectionSimilarity(first: { durationSeconds: number; energy: number; shape: number[] }, second: { durationSeconds: number; energy: number; shape: number[] }) {
+  const durationRatio = Math.min(first.durationSeconds, second.durationSeconds) / Math.max(first.durationSeconds, second.durationSeconds);
+  const energyRatio = Math.min(first.energy, second.energy) / Math.max(first.energy, second.energy, 0.0001);
+  const shapeDistance =
+    first.shape.reduce((sum, value, index) => sum + Math.abs(value - (second.shape[index] ?? value)), 0) / Math.max(first.shape.length, 1);
+  const shapeScore = Math.max(0, 1 - shapeDistance);
+  return durationRatio * 0.35 + energyRatio * 0.25 + shapeScore * 0.4;
+}
+
+function labelAnalysisSections(rawSections: Array<{ startSeconds: number; durationSeconds: number; endSeconds: number; energy: number; shape: number[] }>) {
+  const averageEnergy = rawSections.reduce((sum, section) => sum + section.energy, 0) / Math.max(rawSections.length, 1);
+  const repeatedGroups: Array<{ base: (typeof rawSections)[number]; label: string }> = [];
+  const freshLabels = ['Verse', 'Chorus', 'Bridge', 'Section A', 'Section B', 'Section C'];
+
+  return rawSections.map((section, index) => {
+    let label = freshLabels[Math.min(index, freshLabels.length - 1)] ?? 'Section A';
+    let confidence: AnalysisSection['confidence'] = 'Low';
+    const matchingGroup = repeatedGroups.find((group) => sectionSimilarity(section, group.base) >= 0.76);
+
+    if (index === 0 && section.durationSeconds <= 24) {
+      label = 'Intro';
+      confidence = 'Medium';
+    } else if (index === rawSections.length - 1 && (section.durationSeconds <= 24 || section.energy < averageEnergy * 0.82)) {
+      label = 'Outro';
+      confidence = 'Medium';
+    } else if (section.energy > averageEnergy * 1.18 && index > 1) {
+      label = 'Solo / Break';
+      confidence = 'Medium';
+    } else if (matchingGroup) {
+      label = matchingGroup.label;
+      confidence = 'High';
+    } else {
+      const groupLabel = freshLabels[repeatedGroups.length] ?? `Section ${String.fromCharCode(65 + repeatedGroups.length)}`;
+      label = groupLabel;
+      repeatedGroups.push({ base: section, label: groupLabel });
+      confidence = index <= 2 ? 'Medium' : 'Low';
+    }
+
+    return { ...section, confidence, label };
+  });
+}
+
+function detectLikelySections(buffer: AudioBuffer, bpm: number | null, signature: TimeSignature): AnalysisSection[] {
+  const sampleRate = buffer.sampleRate;
+  const maxSamples = Math.min(buffer.length, sampleRate * 360);
+  const windowSeconds = 3;
+  const samplesPerWindow = Math.max(1, Math.floor(sampleRate * windowSeconds));
+  const windows: Array<{ time: number; rms: number }> = [];
+
+  for (let start = 0; start < maxSamples; start += samplesPerWindow) {
+    const end = Math.min(start + samplesPerWindow, maxSamples);
+    let sum = 0;
+    let count = 0;
+
+    for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
+      const channel = buffer.getChannelData(channelIndex);
+
+      for (let sampleIndex = start; sampleIndex < end; sampleIndex += 256) {
+        const sample = channel[sampleIndex] ?? 0;
+        sum += sample * sample;
+        count += 1;
+      }
+    }
+
+    windows.push({ time: start / sampleRate, rms: Math.sqrt(sum / Math.max(count, 1)) });
+  }
+
+  if (windows.length < 4) {
+    return [];
+  }
+
+  const smoothed = windows.map((window, index) => {
+    const neighbors = windows.slice(Math.max(0, index - 1), Math.min(windows.length, index + 2));
+    const rms = neighbors.reduce((sum, item) => sum + item.rms, 0) / neighbors.length;
+    return { ...window, rms };
+  });
+  const changes = smoothed.slice(1).map((window, index) => Math.abs(window.rms - smoothed[index].rms));
+  const sortedChanges = [...changes].sort((first, second) => first - second);
+  const threshold = sortedChanges[Math.floor(sortedChanges.length * 0.75)] ?? 0;
+  const minSectionSeconds = 15;
+  const starts = [0];
+
+  for (let index = 1; index < smoothed.length; index += 1) {
+    const change = Math.abs(smoothed[index].rms - smoothed[index - 1].rms);
+    const time = smoothed[index].time;
+
+    if (change >= threshold && time - starts[starts.length - 1] >= minSectionSeconds) {
+      starts.push(time);
+    }
+  }
+
+  const durationSeconds = maxSamples / sampleRate;
+
+  if (durationSeconds - starts[starts.length - 1] < 10 && starts.length > 1) {
+    starts.pop();
+  }
+
+  const rawSections = starts.slice(0, 9).map((startSeconds, index) => {
+    const endSeconds = starts[index + 1] ?? durationSeconds;
+    const sectionWindows = smoothed.filter((window) => window.time >= startSeconds && window.time < endSeconds);
+    const energy = sectionWindows.reduce((sum, window) => sum + window.rms, 0) / Math.max(sectionWindows.length, 1);
+    const shape = Array.from({ length: 4 }, (_, shapeIndex) => {
+      const startRatio = shapeIndex / 4;
+      const endRatio = (shapeIndex + 1) / 4;
+      const bucket = sectionWindows.filter((_, windowIndex) => {
+        const ratio = windowIndex / Math.max(sectionWindows.length, 1);
+        return ratio >= startRatio && ratio < endRatio;
+      });
+      const bucketEnergy = bucket.reduce((sum, window) => sum + window.rms, 0) / Math.max(bucket.length, 1);
+      return energy > 0 ? bucketEnergy / energy : 0;
+    });
+
+    return {
+      startSeconds,
+      durationSeconds: Math.max(1, endSeconds - startSeconds),
+      endSeconds,
+      energy,
+      shape,
+    };
+  });
+
+  return labelAnalysisSections(rawSections).map((section) => ({
+    ...section,
+    bars: estimateBarsFromDuration(section.durationSeconds, bpm, signature),
+  }));
+}
+
+function buildOutlineFromSections(sections: AnalysisSection[]) {
+  return sections
+    .map((section) => {
+      const bars = section.bars ?? Math.max(4, Math.round(section.durationSeconds / 4));
+      const roundedBars = Math.max(1, bars);
+      const lines = Array.from({ length: Math.max(1, Math.ceil(roundedBars / 4)) }, (_, lineIndex) => {
+        const barsInLine = Math.min(4, roundedBars - lineIndex * 4);
+        return `| ${Array.from({ length: barsInLine }, () => '  |').join(' ')}`;
+      });
+
+      return `[${section.label} - approx. ${roundedBars} bars]\n${lines.join('\n')}`;
+    })
+    .join('\n\n');
+}
+
+function structureSectionId(section: Pick<AnalysisSection, 'endSeconds' | 'startSeconds'>, index: number) {
+  return `${index}-${Math.round(section.startSeconds)}-${Math.round(section.endSeconds)}`;
+}
+
+function normalizeStructureCells(cells: string[] | undefined, bars: number) {
+  return Array.from({ length: bars }, (_, index) => cells?.[index] ?? '');
+}
+
+function cellsToStructureRows(cells: string[] | undefined, bars: number) {
+  const normalizedCells = normalizeStructureCells(cells, bars);
+  const rows = [];
+
+  for (let index = 0; index < normalizedCells.length; index += 4) {
+    rows.push(normalizedCells.slice(index, index + 4));
+  }
+
+  return rows.length ? rows : [['', '', '', '']];
+}
+
+function normalizeStructureRows(rows: string[][] | undefined, cells: string[] | undefined, bars: number) {
+  if (rows?.length) {
+    return rows.map((row) => (row.length ? row : ['']));
+  }
+
+  return cellsToStructureRows(cells, bars);
+}
+
+function flattenStructureRows(rows: string[][]) {
+  return rows.flat();
+}
+
+function buildStructureChartSections(sections: AnalysisSection[], existingSections: StructureChartSection[] = []) {
+  return sections.map((section, index): StructureChartSection => {
+    const bars = Math.max(1, Math.min(64, (section.bars ?? Math.round(section.durationSeconds / 4)) || 4));
+    const id = structureSectionId(section, index);
+    const existing =
+      existingSections.find((builderSection) => builderSection.id === id) ??
+      existingSections[index] ??
+      existingSections.find((builderSection) => builderSection.label === section.label);
+
+    return {
+      bars,
+      cells: flattenStructureRows(normalizeStructureRows(existing?.rows, existing?.cells, bars)),
+      endSeconds: section.endSeconds,
+      id,
+      label: section.label,
+      rows: normalizeStructureRows(existing?.rows, existing?.cells, bars),
+      startSeconds: section.startSeconds,
+    };
+  });
+}
+
+function renderStructureChartSection(section: StructureChartSection) {
+  const rows = normalizeStructureRows(section.rows, section.cells, section.bars).map((row) => {
+    const rowCells = row.map((cell) => cell.trim() || ' ');
+    return `| ${rowCells.join(' | ')} |`;
+  });
+
+  return `[${section.label}]\n${rows.join('\n')}`;
+}
+
+function renderStructureChartSections(sections: StructureChartSection[]) {
+  return sections.map(renderStructureChartSection).join('\n\n');
+}
+
+function normalizeAnalysisSections(sections: AnalysisSection[], bpm: number | null, signature: TimeSignature) {
+  return [...sections]
+    .map((section) => {
+      const startSeconds = Math.max(0, section.startSeconds);
+      const endSeconds = Math.max(startSeconds + 1, Number.isFinite(section.endSeconds) ? section.endSeconds : startSeconds + section.durationSeconds);
+      const durationSeconds = endSeconds - startSeconds;
+
+      return {
+        ...section,
+        bars: estimateBarsFromDuration(durationSeconds, bpm, signature),
+        durationSeconds,
+        endSeconds,
+        startSeconds,
+      };
+    })
+    .sort((first, second) => first.startSeconds - second.startSeconds);
+}
+
+function getAnalysisStructureConfidence(sections: AnalysisSection[]) {
+  if (!sections.length) {
+    return 'Low';
+  }
+
+  const score = sections.reduce((sum, section) => {
+    if (section.confidence === 'High') return sum + 3;
+    if (section.confidence === 'Medium') return sum + 2;
+    return sum + 1;
+  }, 0);
+  const average = score / sections.length;
+
+  if (average >= 2.35) return 'High';
+  if (average >= 1.65) return 'Medium';
+  return 'Low';
+}
+
+function isLikelyAabbPattern(sections: AnalysisSection[]) {
+  const coreLabels = sections
+    .filter((section) => section.label !== 'Intro' && section.label !== 'Outro')
+    .map((section) => section.label);
+
+  if (coreLabels.length < 4) {
+    return false;
+  }
+
+  for (let index = 0; index <= coreLabels.length - 4; index += 1) {
+    const [first, second, third, fourth] = coreLabels.slice(index, index + 4);
+
+    if (first === second && third === fourth && first !== third) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function convertStrictRoot(root: string, key: KeyName) {
   const noteValue = NOTE_TO_SEMITONE[root];
   const keyValue = NOTE_TO_SEMITONE[key];
@@ -1017,6 +1360,7 @@ function getPlayInKey(concertKey: KeyName, capo: string) {
 }
 
 function buildSnapshot(values: {
+  audioAnalysis?: AudioAnalysisSnapshot | null;
   audioFilename: string;
   audioPath: string;
   audioUrl: string;
@@ -1033,6 +1377,7 @@ function buildSnapshot(values: {
   title: string;
 }): ChartSnapshot {
   return {
+    audioAnalysis: values.audioAnalysis ?? null,
     audioFilename: values.audioFilename,
     audioPath: values.audioPath,
     audioUrl: values.audioUrl,
@@ -1073,6 +1418,7 @@ function toChartSnapshot(chart: PrintableChartData): ChartSnapshot {
 
 function normalizeSavedChart(chart: CloudSavedChart): SavedChart {
   return {
+    audioAnalysis: (chart.audioAnalysis as AudioAnalysisSnapshot | undefined) ?? null,
     audioFilename: chart.audioFilename ?? '',
     audioPath: chart.audioPath ?? '',
     audioUrl: chart.audioUrl ?? '',
@@ -1185,6 +1531,7 @@ function SectionCard({
 export default function Page() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLTextAreaElement>(null);
+  const audioPreviewRef = useRef<HTMLAudioElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const replaceAudioInputRef = useRef<HTMLInputElement>(null);
   const [audioFilename, setAudioFilename] = useState(SAMPLE_CHART.audioFilename);
@@ -1230,14 +1577,26 @@ export default function Page() {
   const [sectionOpen, setSectionOpen] = useState<SectionOpenState>(DEFAULT_SECTION_OPEN_STATE);
   const [measureGridStyle, setMeasureGridStyle] = useState<MeasureGridStyle>('off');
   const [audioAnalyzeExpanded, setAudioAnalyzeExpanded] = useState(false);
+  const [audioStructureExpanded, setAudioStructureExpanded] = useState(false);
+  const [structureChartBuilderExpanded, setStructureChartBuilderExpanded] = useState(false);
   const [analysisFile, setAnalysisFile] = useState<File | null>(null);
+  const [analysisBuffer, setAnalysisBuffer] = useState<AudioBuffer | null>(null);
   const [analysisFileName, setAnalysisFileName] = useState('');
+  const [analysisAudioUrl, setAnalysisAudioUrl] = useState('');
   const [analysisStatus, setAnalysisStatus] = useState<AudioAnalysisStatus>('Waiting for file');
   const [estimatedBpm, setEstimatedBpm] = useState<number | null>(null);
   const [estimatedKey, setEstimatedKey] = useState<KeyName | null>(null);
+  const [analysisDurationSeconds, setAnalysisDurationSeconds] = useState(0);
+  const [estimatedBars, setEstimatedBars] = useState<number | null>(null);
+  const [analysisSections, setAnalysisSections] = useState<AnalysisSection[]>([]);
+  const [detectedAnalysisSections, setDetectedAnalysisSections] = useState<AnalysisSection[]>([]);
   const [analysisBpm, setAnalysisBpm] = useState('');
   const [analysisKey, setAnalysisKey] = useState<KeyName>(SAMPLE_CHART.key);
   const [analysisTimeSignature, setAnalysisTimeSignature] = useState<TimeSignature | ''>('');
+  const [tapTimes, setTapTimes] = useState<number[]>([]);
+  const [tapTempoBpm, setTapTempoBpm] = useState<number | null>(null);
+  const [structureChartSections, setStructureChartSections] = useState<StructureChartSection[]>([]);
+  const [structureChartMessage, setStructureChartMessage] = useState('');
 
   useEffect(() => {
     const mountTimer = window.setTimeout(() => {
@@ -1252,6 +1611,8 @@ export default function Page() {
         const storedSymbolCategory = window.localStorage.getItem(SYMBOL_CATEGORY_STORAGE_KEY);
         const storedUiMode = window.localStorage.getItem(UI_MODE_STORAGE_KEY);
         const storedAudioAnalyzeExpanded = window.localStorage.getItem(AUDIO_ANALYZE_EXPANDED_STORAGE_KEY);
+        const storedAudioStructureExpanded = window.localStorage.getItem(AUDIO_STRUCTURE_EXPANDED_STORAGE_KEY);
+        const storedStructureChartBuilderExpanded = window.localStorage.getItem(STRUCTURE_CHART_BUILDER_EXPANDED_STORAGE_KEY);
 
         parsedSavedCharts = dedupeCharts(saved ? (JSON.parse(saved) as SavedChart[]) : []);
         setSavedCharts(parsedSavedCharts);
@@ -1283,6 +1644,18 @@ export default function Page() {
           setAudioAnalyzeExpanded(false);
         }
 
+        if (storedAudioStructureExpanded === 'true' || storedAudioStructureExpanded === 'false') {
+          setAudioStructureExpanded(storedAudioStructureExpanded === 'true');
+        } else {
+          setAudioStructureExpanded(false);
+        }
+
+        if (storedStructureChartBuilderExpanded === 'true' || storedStructureChartBuilderExpanded === 'false') {
+          setStructureChartBuilderExpanded(storedStructureChartBuilderExpanded === 'true');
+        } else {
+          setStructureChartBuilderExpanded(false);
+        }
+
         if (getInitialCloudStatus().connected) {
           const cloudResult = await fetchCloudCharts();
 
@@ -1290,7 +1663,16 @@ export default function Page() {
             setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${cloudResult.error}` });
             setCloudMessage('Supabase is unavailable right now. Using local saved charts.');
           } else {
-            const cloudCharts = dedupeCharts(cloudResult.charts.map(normalizeSavedChart));
+            const localAnalysisById = new Map(parsedSavedCharts.map((chart) => [chart.id, chart.audioAnalysis]));
+            const cloudCharts = dedupeCharts(
+              cloudResult.charts.map((chart) => {
+                const normalizedChart = normalizeSavedChart(chart);
+                return {
+                  ...normalizedChart,
+                  audioAnalysis: normalizedChart.audioAnalysis ?? localAnalysisById.get(normalizedChart.id) ?? null,
+                };
+              })
+            );
             parsedSavedCharts = cloudCharts;
             setSavedCharts(cloudCharts);
             setSelectedSavedChartId(cloudCharts[0]?.id ?? '');
@@ -1356,6 +1738,18 @@ export default function Page() {
     textarea.style.height = `${textarea.scrollHeight}px`;
   }, [output]);
 
+  useEffect(() => {
+    return () => {
+      if (analysisAudioUrl) {
+        URL.revokeObjectURL(analysisAudioUrl);
+      }
+    };
+  }, [analysisAudioUrl]);
+
+  useEffect(() => {
+    setStructureChartSections((currentSections) => buildStructureChartSections(analysisSections, currentSections));
+  }, [analysisSections]);
+
   const normalizedInput = normalizeChartInput(input);
   const convertedChart = buildConvertedChart(normalizedInput, selectedKey, chartMode);
   const activeNashvilleChart = output.trim() ? output : convertedChart.trim() ? convertedChart : '';
@@ -1364,9 +1758,33 @@ export default function Page() {
   const isQuickMode = uiMode === 'quick';
   const chartAudioDownloadUrl = resolveChartAudioDownloadUrl({ audioPath, audioUrl });
   const hasAttachedAudio = Boolean(audioUrl.trim() || audioPath.trim());
+  const analysisDisplayTimeSignature = analysisTimeSignature || timeSignature;
+  const analysisDisplayBars = estimateBarsFromDuration(analysisDurationSeconds, estimatedBpm, analysisDisplayTimeSignature) ?? estimatedBars;
+  const analysisStructureConfidence = getAnalysisStructureConfidence(analysisSections);
+  const hasLikelyAabbPattern = isLikelyAabbPattern(analysisSections);
+  const isStructureBuilderFocus = Boolean(structureChartBuilderExpanded && structureChartSections.length);
+
+  function currentAudioAnalysisSnapshot(): AudioAnalysisSnapshot | null {
+    if (!estimatedBpm && !estimatedKey && !analysisDurationSeconds && !estimatedBars && !analysisSections.length && !structureChartSections.length) {
+      return null;
+    }
+
+    return {
+      bpm: estimatedBpm,
+      chartBuilderSections: structureChartSections,
+      detectedSections: detectedAnalysisSections,
+      durationSeconds: analysisDurationSeconds,
+      estimatedBars,
+      key: estimatedKey,
+      sections: analysisSections,
+      status: analysisStatus,
+      timeSignature: analysisTimeSignature,
+    };
+  }
 
   function currentSnapshot() {
     return buildSnapshot({
+      audioAnalysis: currentAudioAnalysisSnapshot(),
       audioFilename,
       audioPath,
       audioUrl,
@@ -1402,12 +1820,42 @@ export default function Page() {
     setInput(chart.chordChart);
     setOutput(chart.nashvilleChart);
     setLastSavedSnapshot(JSON.stringify(toChartSnapshot(chart)));
+    applyAudioAnalysisSnapshot(chart.audioAnalysis ?? null, chart.key);
   }
 
   function applyAudioAttachment(fields: Pick<ChartSnapshot, 'audioFilename' | 'audioPath' | 'audioUrl'>) {
     setAudioFilename(fields.audioFilename ?? '');
     setAudioPath(fields.audioPath ?? '');
     setAudioUrl(fields.audioUrl ?? '');
+  }
+
+  function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fallbackKey = selectedKey) {
+    if (!snapshot) {
+      handleClearAudioAnalysis();
+      return;
+    }
+
+    setAnalysisFile(null);
+    setAnalysisBuffer(null);
+    setAnalysisFileName('');
+    setAnalysisBuffer(null);
+    setAnalysisAudioUrl('');
+    setEstimatedBpm(snapshot.bpm);
+    setEstimatedKey(snapshot.key);
+    setAnalysisDurationSeconds(snapshot.durationSeconds);
+    setEstimatedBars(snapshot.estimatedBars);
+    const restoredSections = normalizeAnalysisSections(snapshot.sections, snapshot.bpm, snapshot.timeSignature || timeSignature);
+    const restoredDetectedSections = normalizeAnalysisSections(snapshot.detectedSections ?? snapshot.sections, snapshot.bpm, snapshot.timeSignature || timeSignature);
+    setAnalysisSections(restoredSections);
+    setDetectedAnalysisSections(restoredDetectedSections);
+    setStructureChartSections(buildStructureChartSections(restoredSections, snapshot.chartBuilderSections ?? []));
+    setAnalysisBpm(snapshot.bpm ? String(snapshot.bpm) : '');
+    setAnalysisKey(snapshot.key ?? fallbackKey);
+    setAnalysisTimeSignature(snapshot.timeSignature);
+    setAnalysisStatus(snapshot.status);
+    setTapTimes([]);
+    setTapTempoBpm(null);
+    setStructureChartMessage(snapshot.chartBuilderSections?.length ? 'Structure chart builder restored with this chart.' : '');
   }
 
   function persistSavedCharts(nextCharts: SavedChart[]) {
@@ -1479,21 +1927,59 @@ export default function Page() {
     });
   }
 
+  function handleToggleAudioStructureExpanded() {
+    setAudioStructureExpanded((current) => {
+      const next = !current;
+      window.localStorage.setItem(AUDIO_STRUCTURE_EXPANDED_STORAGE_KEY, String(next));
+      return next;
+    });
+  }
+
+  function handleToggleStructureChartBuilderExpanded() {
+    setStructureChartBuilderExpanded((current) => {
+      const next = !current;
+      window.localStorage.setItem(STRUCTURE_CHART_BUILDER_EXPANDED_STORAGE_KEY, String(next));
+      if (next) {
+        setSectionOpen((currentValue) => {
+          const nextSectionState = { ...currentValue, advanced: false };
+          window.localStorage.setItem(SECTION_OPEN_STORAGE_KEY, JSON.stringify(nextSectionState));
+          return nextSectionState;
+        });
+      }
+      return next;
+    });
+  }
+
   function handleAudioAnalysisFile(file: File | null) {
     if (!file) {
       setAnalysisFile(null);
       setAnalysisFileName('');
+      setAnalysisAudioUrl('');
       setEstimatedBpm(null);
       setEstimatedKey(null);
+      setAnalysisDurationSeconds(0);
+      setEstimatedBars(null);
+      setAnalysisSections([]);
+      setDetectedAnalysisSections([]);
       setAnalysisStatus('Waiting for file');
+      setStructureChartSections([]);
+      setStructureChartMessage('');
       return;
     }
 
     setAnalysisFile(file);
+    setAnalysisBuffer(null);
     setAnalysisFileName(file.name);
+    setAnalysisAudioUrl(URL.createObjectURL(file));
     setEstimatedBpm(null);
     setEstimatedKey(null);
+    setAnalysisDurationSeconds(0);
+    setEstimatedBars(null);
+    setAnalysisSections([]);
+    setDetectedAnalysisSections([]);
     setAnalysisStatus(/\.(mp3|wav|m4a)$/i.test(file.name) ? 'Waiting for file' : 'Analysis failed');
+    setStructureChartSections([]);
+    setStructureChartMessage('');
   }
 
   async function handleAnalyzeAudio() {
@@ -1513,8 +1999,12 @@ export default function Page() {
       const audioContext = new window.AudioContext();
       const arrayBuffer = await analysisFile.arrayBuffer();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      setAnalysisBuffer(audioBuffer);
       const bpm = estimateBpmFromAudioBuffer(audioBuffer);
       const key = estimateKeyFromAudioBuffer(audioBuffer);
+      const durationSeconds = audioBuffer.duration;
+      const totalBars = estimateBarsFromDuration(durationSeconds, bpm, analysisTimeSignature || timeSignature);
+      const sections = detectLikelySections(audioBuffer, bpm, analysisTimeSignature || timeSignature);
       await audioContext.close();
 
       if (!bpm && !key) {
@@ -1524,6 +2014,10 @@ export default function Page() {
 
       setEstimatedBpm(bpm);
       setEstimatedKey(key);
+      setAnalysisDurationSeconds(durationSeconds);
+      setEstimatedBars(totalBars);
+      setAnalysisSections(sections);
+      setDetectedAnalysisSections(sections);
 
       if (bpm) {
         setAnalysisBpm(String(bpm));
@@ -1567,13 +2061,302 @@ export default function Page() {
 
   function handleClearAudioAnalysis() {
     setAnalysisFile(null);
+    setAnalysisBuffer(null);
     setAnalysisFileName('');
+    setAnalysisAudioUrl('');
     setEstimatedBpm(null);
     setEstimatedKey(null);
+    setAnalysisDurationSeconds(0);
+    setEstimatedBars(null);
+    setAnalysisSections([]);
     setAnalysisBpm('');
     setAnalysisKey(selectedKey);
     setAnalysisTimeSignature('');
     setAnalysisStatus('Waiting for file');
+    setStructureChartSections([]);
+    setStructureChartMessage('');
+  }
+
+  function handleBuildChartOutline(replace: boolean) {
+    if (!analysisSections.length) {
+      return;
+    }
+
+    const outline = buildOutlineFromSections(analysisSections);
+    const hasOutput = output.trim();
+
+    if (replace) {
+      if (hasOutput && !window.confirm('Replace the current Nashville chart with this analysis outline?')) {
+        return;
+      }
+
+      setOutput(outline);
+      setSmartPasteMessage('Analysis outline inserted. Structure is approximate. Use as a starting outline.');
+      return;
+    }
+
+    setOutput((current) => (current.trim() ? `${current.trim()}\n\n${outline}` : outline));
+    setSmartPasteMessage('Analysis outline appended. Structure is approximate. Use as a starting outline.');
+  }
+
+  function updateStructureRows(section: StructureChartSection, updater: (rows: string[][]) => string[][]) {
+    const rows = updater(normalizeStructureRows(section.rows, section.cells, section.bars));
+    return {
+      ...section,
+      bars: Math.max(1, flattenStructureRows(rows).length),
+      cells: flattenStructureRows(rows),
+      rows,
+    };
+  }
+
+  function handleUpdateStructureChartCell(sectionIndex: number, rowIndex: number, cellIndex: number, value: string) {
+    setStructureChartSections((sections) =>
+      sections.map((section, currentSectionIndex) =>
+        currentSectionIndex === sectionIndex
+          ? updateStructureRows(section, (rows) =>
+              rows.map((row, currentRowIndex) =>
+                currentRowIndex === rowIndex
+                  ? row.map((cell, currentCellIndex) => (currentCellIndex === cellIndex ? value : cell))
+                  : row
+              )
+            )
+          : section
+      )
+    );
+  }
+
+  function handleAddStructureBar(sectionIndex: number, rowIndex: number) {
+    setStructureChartSections((sections) =>
+      sections.map((section, currentSectionIndex) =>
+        currentSectionIndex === sectionIndex
+          ? updateStructureRows(section, (rows) => rows.map((row, currentRowIndex) => (currentRowIndex === rowIndex ? [...row, ''] : row)))
+          : section
+      )
+    );
+  }
+
+  function handleRemoveStructureBar(sectionIndex: number, rowIndex: number) {
+    setStructureChartSections((sections) =>
+      sections.map((section, currentSectionIndex) =>
+        currentSectionIndex === sectionIndex
+          ? updateStructureRows(section, (rows) =>
+              rows.map((row, currentRowIndex) => (currentRowIndex === rowIndex && row.length > 1 ? row.slice(0, -1) : row))
+            )
+          : section
+      )
+    );
+  }
+
+  function handleAddStructureRow(sectionIndex: number) {
+    setStructureChartSections((sections) =>
+      sections.map((section, currentSectionIndex) =>
+        currentSectionIndex === sectionIndex ? updateStructureRows(section, (rows) => [...rows, ['', '', '', '']]) : section
+      )
+    );
+  }
+
+  function handleRemoveStructureRow(sectionIndex: number, rowIndex: number) {
+    setStructureChartSections((sections) =>
+      sections.map((section, currentSectionIndex) =>
+        currentSectionIndex === sectionIndex
+          ? updateStructureRows(section, (rows) => (rows.length > 1 ? rows.filter((_, currentRowIndex) => currentRowIndex !== rowIndex) : rows))
+          : section
+      )
+    );
+  }
+
+  function handleCopyPreviousStructureSection(sectionIndex: number) {
+    setStructureChartSections((sections) => {
+      const currentSection = sections[sectionIndex];
+      const previousSection = sections
+        .slice(0, sectionIndex)
+        .reverse()
+        .find((section) => section.label === currentSection?.label);
+
+      if (!currentSection || !previousSection) {
+        setStructureChartMessage('No previous matching section found.');
+        return sections;
+      }
+
+      setStructureChartMessage(`Copied previous ${currentSection.label} grid.`);
+      return sections.map((section, currentSectionIndex) =>
+        currentSectionIndex === sectionIndex
+          ? {
+              ...section,
+              cells: flattenStructureRows(normalizeStructureRows(previousSection.rows, previousSection.cells, section.bars)),
+              rows: normalizeStructureRows(previousSection.rows, previousSection.cells, section.bars),
+            }
+          : section
+      );
+    });
+  }
+
+  function handleApplyStructureSection(sectionIndex: number, replace = false) {
+    const sectionText = structureChartSections[sectionIndex] ? renderStructureChartSection(structureChartSections[sectionIndex]) : '';
+
+    if (!sectionText) {
+      return;
+    }
+
+    if (replace) {
+      if (output.trim() && !window.confirm('Replace the current Nashville chart with this section?')) {
+        return;
+      }
+
+      setOutput(sectionText);
+      setSmartPasteMessage('Structure section applied to chart.');
+      return;
+    }
+
+    setOutput((current) => (current.trim() ? `${current.trim()}\n\n${sectionText}` : sectionText));
+    setSmartPasteMessage('Structure section appended to chart.');
+  }
+
+  function handleApplyAllStructureSections(replace: boolean) {
+    const chartText = renderStructureChartSections(structureChartSections);
+
+    if (!chartText.trim()) {
+      return;
+    }
+
+    if (replace) {
+      if (output.trim() && !window.confirm('Replace the current Nashville chart with the structure grid?')) {
+        return;
+      }
+
+      setOutput(chartText);
+      setSmartPasteMessage('Structure chart applied. Fill any blank bars as needed.');
+      return;
+    }
+
+    setOutput((current) => (current.trim() ? `${current.trim()}\n\n${chartText}` : chartText));
+    setSmartPasteMessage('Structure chart appended. Fill any blank bars as needed.');
+  }
+
+  function handleJumpToAnalysisSection(seconds: number) {
+    const player = audioPreviewRef.current;
+
+    if (!player) {
+      return;
+    }
+
+    player.currentTime = seconds;
+    void player.play();
+  }
+
+  function handleRenameAnalysisSection(index: number, label: string) {
+    setAnalysisSections((sections) =>
+      sections.map((section, sectionIndex) => (sectionIndex === index ? { ...section, label } : section))
+    );
+  }
+
+  function handleUpdateAnalysisSectionTime(index: number, field: 'startSeconds' | 'endSeconds', value: string) {
+    const nextSeconds = parseDurationInput(value);
+
+    if (nextSeconds === null || nextSeconds < 0 || (analysisDurationSeconds && nextSeconds > analysisDurationSeconds)) {
+      setSmartPasteMessage('Use mm:ss inside the song duration.');
+      return;
+    }
+
+    setAnalysisSections((sections) => {
+      const updatedSections = sections.map((section, sectionIndex) => {
+        if (sectionIndex !== index) {
+          return section;
+        }
+
+        const updatedSection = { ...section, [field]: nextSeconds };
+
+        if (updatedSection.startSeconds >= updatedSection.endSeconds) {
+          setSmartPasteMessage('Section start time must be before end time.');
+          return section;
+        }
+
+        return updatedSection;
+      });
+
+      return normalizeAnalysisSections(updatedSections, estimatedBpm, analysisDisplayTimeSignature);
+    });
+  }
+
+  function handleDeleteAnalysisSection(index: number) {
+    setAnalysisSections((sections) => sections.filter((_, sectionIndex) => sectionIndex !== index));
+  }
+
+  function handleAddAnalysisSection() {
+    const lastSection = analysisSections.at(-1);
+    const startSeconds = Math.min(
+      Math.max(0, lastSection ? lastSection.endSeconds : Math.max(0, analysisDurationSeconds - 16)),
+      Math.max(0, analysisDurationSeconds - 1)
+    );
+    const endSeconds = analysisDurationSeconds
+      ? Math.min(analysisDurationSeconds, startSeconds + 16)
+      : startSeconds + 16;
+    const newSection: AnalysisSection = {
+      bars: estimateBarsFromDuration(Math.max(1, endSeconds - startSeconds), estimatedBpm, analysisDisplayTimeSignature),
+      confidence: 'Low',
+      durationSeconds: Math.max(1, endSeconds - startSeconds),
+      endSeconds,
+      energy: 0,
+      label: 'Section A',
+      shape: [1, 1, 1, 1],
+      startSeconds,
+    };
+
+    setAnalysisSections((sections) => normalizeAnalysisSections([...sections, newSection], estimatedBpm, analysisDisplayTimeSignature));
+  }
+
+  async function handleSaveStructure() {
+    await saveChartRecord();
+    setSmartPasteMessage('Structure saved with this chart.');
+  }
+
+  function handleResetAnalysisSections() {
+    if (!detectedAnalysisSections.length) {
+      return;
+    }
+
+    setAnalysisSections(detectedAnalysisSections);
+    setSmartPasteMessage('Structure reset to the detected analysis.');
+  }
+
+  function handleTapTempo() {
+    const now = performance.now();
+    const recentTaps = [...tapTimes.filter((time) => now - time < 5000), now].slice(-8);
+    setTapTimes(recentTaps);
+
+    if (recentTaps.length < 4) {
+      return;
+    }
+
+    const intervals = recentTaps.slice(1).map((time, index) => time - recentTaps[index]);
+    const averageInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
+    const nextBpm = Math.round(60000 / averageInterval);
+
+    if (Number.isFinite(nextBpm) && nextBpm > 30 && nextBpm < 260) {
+      setTapTempoBpm(nextBpm);
+      setAnalysisBpm(String(nextBpm));
+    }
+  }
+
+  function handleSetAnalysisTimeSignature(signature: TimeSignature | '') {
+    setAnalysisTimeSignature(signature);
+
+    if (analysisSections.length) {
+      const effectiveSignature = signature || timeSignature;
+      setAnalysisSections((sections) =>
+        sections.map((section) => ({
+          ...section,
+          bars: estimateBarsFromDuration(section.durationSeconds, estimatedBpm, effectiveSignature),
+        }))
+      );
+      setEstimatedBars(estimateBarsFromDuration(analysisDurationSeconds, estimatedBpm, effectiveSignature));
+    }
+  }
+
+  function handleApplyTapTempo() {
+    if (tapTempoBpm) {
+      setTempo(String(tapTempoBpm));
+    }
   }
 
   function handleCleanUpInput() {
@@ -1716,7 +2499,10 @@ export default function Page() {
         setCloudMessage('Saved locally. Cloud sync failed, so localStorage is still your backup.');
         return savedChart;
       } else if (result.chart) {
-        const cloudSavedChart = normalizeSavedChart(result.chart);
+        const cloudSavedChart = {
+          ...normalizeSavedChart(result.chart),
+          audioAnalysis: savedChart.audioAnalysis ?? null,
+        };
         const cloudCharts = nextCharts.some((chart) => chart.id === savedChart.id)
           ? nextCharts.map((chart) => (chart.id === savedChart.id ? cloudSavedChart : chart))
           : [cloudSavedChart, ...nextCharts];
@@ -2079,7 +2865,7 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="grid gap-6 print:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid gap-6 print:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(420px,500px)] 2xl:grid-cols-[minmax(0,1fr)_520px]">
             <section className={`no-print order-1 space-y-5 ${PANEL_CLASS}`}>
               <SectionCard
                 title="Song Setup"
@@ -2507,7 +3293,7 @@ export default function Page() {
               ) : null}
             </section>
 
-            <section className={`order-2 ${PANEL_CLASS} xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
+            <section className={`order-2 ${PANEL_CLASS} xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto xl:overscroll-contain print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
               <div className="print-only border-b border-zinc-300 pb-2 text-black">
                 <h2 className="text-xl font-semibold">{songTitle || 'Untitled Song'}</h2>
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm leading-5">
@@ -2543,6 +3329,11 @@ export default function Page() {
                             onChange={(event) => handleAudioAnalysisFile(event.target.files?.[0] ?? null)}
                           />
                         </label>
+                        {analysisAudioUrl ? (
+                          <audio ref={audioPreviewRef} className="w-full" controls src={analysisAudioUrl}>
+                            <track kind="captions" />
+                          </audio>
+                        ) : null}
 
                         <div className="flex flex-wrap items-center gap-2">
                           <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleAnalyzeAudio()} disabled={!analysisFileName || analysisStatus === 'Analyzing...'}>
@@ -2553,6 +3344,19 @@ export default function Page() {
                           </button>
                           <span className="text-sm text-stone-300">{analysisStatus}</span>
                         </div>
+                        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-950/20 bg-stone-950/35 p-3">
+                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleTapTempo}>
+                            Tap Tempo
+                          </button>
+                          <span className="text-sm text-stone-300">
+                            {tapTempoBpm ? `Tap Tempo: ${tapTempoBpm} BPM` : `${tapTimes.length} tap${tapTimes.length === 1 ? '' : 's'}`}
+                          </span>
+                          {tapTempoBpm ? (
+                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyTapTempo}>
+                              Apply Tap Tempo
+                            </button>
+                          ) : null}
+                        </div>
                         {analysisStatus === 'Analysis failed' ? (
                           <p className="text-sm text-amber-200">Could not estimate BPM. Enter manually.</p>
                         ) : null}
@@ -2561,11 +3365,205 @@ export default function Page() {
                           <div className="space-y-2 rounded-xl border border-emerald-900/30 bg-emerald-500/10 p-3">
                             <div className="grid gap-2 text-sm text-stone-200 sm:grid-cols-2 xl:grid-cols-1">
                               <p className="truncate"><span className="font-medium text-emerald-100">File:</span> {analysisFileName || 'N/A'}</p>
+                              <p><span className="font-medium text-emerald-100">Duration:</span> {formatDuration(analysisDurationSeconds)}</p>
                               <p><span className="font-medium text-emerald-100">Estimated BPM:</span> {estimatedBpm ? `${estimatedBpm} BPM` : 'N/A'}</p>
                               <p><span className="font-medium text-emerald-100">Estimated Key:</span> {estimatedKey ?? 'N/A'}</p>
-                              <p><span className="font-medium text-emerald-100">Time:</span> {analysisTimeSignature || 'No change'}</p>
+                              <p><span className="font-medium text-emerald-100">Time:</span> {analysisDisplayTimeSignature}</p>
+                              <p><span className="font-medium text-emerald-100">Estimated bars:</span> {analysisDisplayBars ?? 'N/A'}</p>
+                              <p><span className="font-medium text-emerald-100">Structure confidence:</span> {analysisStructureConfidence}</p>
                             </div>
-                            <p className="text-xs text-stone-400">Review by ear. Key detection is experimental. Select the key manually if needed.</p>
+                            <p className="text-xs text-stone-400">Approximate arrangement guess. Review by ear. Bar count is approximate. Confirm by ear. Key detection is experimental. Select the key manually if needed.</p>
+                            {analysisDisplayTimeSignature === '3/4' ? <p className="text-xs text-stone-400">Waltz-aware estimate: bars are counted as 3 beats each.</p> : null}
+                            {hasLikelyAabbPattern ? <p className="text-xs text-amber-200">Possible AABB fiddle tune pattern.</p> : null}
+                            {analysisSections.length ? (
+                              <div className="space-y-1 rounded-lg border border-emerald-900/25 bg-stone-950/35 p-2">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left"
+                                  onClick={handleToggleAudioStructureExpanded}
+                                  aria-expanded={audioStructureExpanded}
+                                >
+                                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100">Likely Structure</span>
+                                  <span className="text-xs text-stone-400">{audioStructureExpanded ? 'Collapse ^' : 'Expand v'}</span>
+                                </button>
+                                {audioStructureExpanded ? (
+                                  <>
+                                    <div className="space-y-2 text-xs text-stone-300">
+                                      {analysisSections.map((section, index) => (
+                                        <div key={`${section.startSeconds}-${section.endSeconds}-${section.label}-${index}`} className="space-y-2 rounded-lg border border-emerald-900/20 bg-black/15 p-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <button
+                                              type="button"
+                                              className="text-left text-emerald-100 underline decoration-emerald-700 underline-offset-4"
+                                              onClick={() => handleJumpToAnalysisSection(section.startSeconds)}
+                                            >
+                                              Play {formatDuration(section.startSeconds)}
+                                            </button>
+                                            <span className="text-[10px] uppercase tracking-[0.14em] text-stone-500">
+                                              {section.bars ? `approx. ${section.bars} bars` : 'bars N/A'} - {section.confidence}
+                                            </span>
+                                          </div>
+                                          <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                                            <label className="flex min-w-0 flex-col gap-1">
+                                              Label
+                                              <select
+                                                className={`${INPUT_CLASS} py-2 text-sm`}
+                                                value={STRUCTURE_LABELS.includes(section.label as (typeof STRUCTURE_LABELS)[number]) ? section.label : 'Section A'}
+                                                onChange={(event) => handleRenameAnalysisSection(index, event.target.value)}
+                                                aria-label={`Section label at ${formatDuration(section.startSeconds)}`}
+                                              >
+                                                {STRUCTURE_LABELS.map((label) => (
+                                                  <option key={label} value={label}>
+                                                    {label}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </label>
+                                            <label className="flex min-w-0 flex-col gap-1">
+                                              Start
+                                              <input
+                                                className={`${INPUT_CLASS} py-2 text-sm`}
+                                                value={formatDuration(section.startSeconds)}
+                                                onChange={(event) => handleUpdateAnalysisSectionTime(index, 'startSeconds', event.target.value)}
+                                                aria-label={`Section start at ${formatDuration(section.startSeconds)}`}
+                                              />
+                                            </label>
+                                            <label className="flex min-w-0 flex-col gap-1">
+                                              End
+                                              <input
+                                                className={`${INPUT_CLASS} py-2 text-sm`}
+                                                value={formatDuration(section.endSeconds)}
+                                                onChange={(event) => handleUpdateAnalysisSectionTime(index, 'endSeconds', event.target.value)}
+                                                aria-label={`Section end at ${formatDuration(section.endSeconds)}`}
+                                              />
+                                            </label>
+                                          </div>
+                                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleDeleteAnalysisSection(index)}>
+                                            Delete Section
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <p className="text-xs text-stone-500">Structure is approximate. Use as a starting outline.</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAddAnalysisSection}>
+                                        Add Section
+                                      </button>
+                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleSaveStructure()}>
+                                        Save Structure
+                                      </button>
+                                      {detectedAnalysisSections.length ? (
+                                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleResetAnalysisSections}>
+                                          Reset to Detected Structure
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <p className="text-xs text-stone-400">
+                                    {analysisSections.length} section{analysisSections.length === 1 ? '' : 's'} detected. Expand to edit labels and times.
+                                  </p>
+                                )}
+                              </div>
+                            ) : null}
+                            {structureChartSections.length ? (
+                              <div className="space-y-3 rounded-lg border border-amber-900/25 bg-stone-950/40 p-3">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left"
+                                  onClick={handleToggleStructureChartBuilderExpanded}
+                                  aria-expanded={structureChartBuilderExpanded}
+                                >
+                                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-100">Build Chart From Structure</span>
+                                  <span className="text-xs text-stone-400">{structureChartBuilderExpanded ? 'Collapse ^' : 'Expand v'}</span>
+                                </button>
+                                {structureChartBuilderExpanded ? (
+                                  <>
+                                    <p className="text-xs text-stone-400">
+                                      Enter any Nashville shorthand in the grid. Cells are free text, so 6, 6m, 2, 2m, split bars, pushes, holds, and walkups all work.
+                                    </p>
+                                    <div className="space-y-5">
+                                      {structureChartSections.map((section, sectionIndex) => {
+                                        const hasPreviousMatch = structureChartSections
+                                          .slice(0, sectionIndex)
+                                          .some((previousSection) => previousSection.label === section.label);
+
+                                        return (
+                                          <div key={section.id} className="space-y-3 rounded-xl border border-amber-950/25 bg-black/15 p-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <div>
+                                                <p className="text-sm font-medium text-amber-100">{section.label}</p>
+                                                <p className="text-[11px] text-stone-500">
+                                                  approx. {section.bars} bar{section.bars === 1 ? '' : 's'} - {formatDuration(section.startSeconds)}-{formatDuration(section.endSeconds)}
+                                                </p>
+                                              </div>
+                                              <div className="flex flex-wrap gap-2">
+                                                {hasPreviousMatch ? (
+                                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleCopyPreviousStructureSection(sectionIndex)}>
+                                                    Copy from previous {section.label}
+                                                  </button>
+                                                ) : null}
+                                                <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleApplyStructureSection(sectionIndex)}>
+                                                  Apply Section to Chart
+                                                </button>
+                                              </div>
+                                            </div>
+                                            <div className="space-y-3">
+                                              {normalizeStructureRows(section.rows, section.cells, section.bars).map((row, rowIndex) => (
+                                                <div key={`${section.id}-row-${rowIndex}`} className="space-y-2 rounded-xl border border-amber-950/20 bg-stone-950/35 p-2.5">
+                                                  <div className="flex flex-wrap gap-2">
+                                                    {row.map((cell, cellIndex) => (
+                                                      <input
+                                                        key={`${section.id}-${rowIndex}-${cellIndex}`}
+                                                        className="h-12 min-w-[4.75rem] flex-1 rounded-xl border border-amber-950/35 bg-stone-950/75 px-3 py-2 text-center font-mono text-base font-bold text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                                                        value={cell}
+                                                        onChange={(event) => handleUpdateStructureChartCell(sectionIndex, rowIndex, cellIndex, event.target.value)}
+                                                        placeholder=" "
+                                                        aria-label={`${section.label} row ${rowIndex + 1} bar ${cellIndex + 1}`}
+                                                      />
+                                                    ))}
+                                                  </div>
+                                                  <div className="flex flex-wrap gap-1.5">
+                                                    <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleAddStructureBar(sectionIndex, rowIndex)}>
+                                                      Add bar to this row
+                                                    </button>
+                                                    <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleRemoveStructureBar(sectionIndex, rowIndex)} disabled={row.length <= 1}>
+                                                      Remove bar from this row
+                                                    </button>
+                                                    <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleRemoveStructureRow(sectionIndex, rowIndex)} disabled={normalizeStructureRows(section.rows, section.cells, section.bars).length <= 1}>
+                                                      Remove row
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                              ))}
+                                              <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleAddStructureRow(sectionIndex)}>
+                                                Add new row
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    {structureChartMessage ? <p className="text-xs text-stone-300">{structureChartMessage}</p> : null}
+                                    <div className="flex flex-wrap gap-2">
+                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleApplyAllStructureSections(true)}>
+                                        Apply All Sections to Chart
+                                      </button>
+                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleApplyAllStructureSections(false)}>
+                                        Append All Sections to Chart
+                                      </button>
+                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleSaveStructure()}>
+                                        Save Builder Progress
+                                      </button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <p className="text-xs text-stone-400">
+                                    {structureChartSections.length} section grid{structureChartSections.length === 1 ? '' : 's'} ready. Expand to enter Nashville numbers.
+                                  </p>
+                                )}
+                              </div>
+                            ) : null}
                             <div className="flex flex-wrap gap-2">
                               {estimatedBpm ? (
                                 <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyEstimatedBpm}>
@@ -2577,13 +3575,22 @@ export default function Page() {
                                   Apply Key to Chart
                                 </button>
                               ) : null}
+                              {analysisSections.length ? (
+                                <>
+                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleBuildChartOutline(true)}>
+                                    Build Chart Outline
+                                  </button>
+                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleBuildChartOutline(false)}>
+                                    Append Outline
+                                  </button>
+                                </>
+                              ) : null}
                             </div>
                           </div>
                         ) : analysisFileName ? (
                           <p className="truncate text-xs text-stone-400">File: {analysisFileName}</p>
                         ) : null}
-
-                        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                        <div className={`grid gap-3 sm:grid-cols-3 xl:grid-cols-1 ${isStructureBuilderFocus ? 'hidden' : ''}`}>
                           <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
                             Manual BPM
                             <input className={INPUT_CLASS} inputMode="numeric" placeholder="120" value={analysisBpm} onChange={(event) => setAnalysisBpm(event.target.value)} />
@@ -2600,7 +3607,7 @@ export default function Page() {
                           </label>
                           <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
                             Time Signature
-                            <select className={INPUT_CLASS} value={analysisTimeSignature} onChange={(event) => setAnalysisTimeSignature(event.target.value as TimeSignature | '')}>
+                            <select className={INPUT_CLASS} value={analysisTimeSignature} onChange={(event) => handleSetAnalysisTimeSignature(event.target.value as TimeSignature | '')}>
                               <option value="">No change</option>
                               {TIME_SIGNATURES.map((signature) => (
                                 <option key={signature} value={signature}>
@@ -2611,7 +3618,7 @@ export default function Page() {
                           </label>
                         </div>
 
-                        <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleApplyAudioAnalysis}>
+                        <button type="button" className={`${EMPHASIS_BUTTON_CLASS} ${isStructureBuilderFocus ? 'hidden' : ''}`} onClick={handleApplyAudioAnalysis}>
                           Apply Manual Values
                         </button>
                       </div>
@@ -2619,7 +3626,7 @@ export default function Page() {
                   </section>
                 ) : null}
 
-                {!isQuickMode ? <section className={`${SUBPANEL_CLASS} no-print`}>
+                {!isQuickMode && !isStructureBuilderFocus ? <section className={`${SUBPANEL_CLASS} no-print`}>
                   <div className="space-y-1">
                     <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Symbols & Advanced Tools</h4>
                     <p className="text-xs text-stone-400">Insert chart shorthand and section tags into the active editor.</p>
@@ -2669,7 +3676,7 @@ export default function Page() {
                   </div>
                 </section> : null}
 
-                {!isQuickMode ? (
+                {!isQuickMode && !isStructureBuilderFocus ? (
                   <section className={`${SUBPANEL_CLASS} no-print`}>
                     <div className="space-y-1">
                       <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Notes</h4>
@@ -2684,7 +3691,7 @@ export default function Page() {
                   </section>
                 ) : null}
 
-                {!isQuickMode ? <section className={`${SUBPANEL_CLASS} no-print`}>
+                {!isQuickMode && !isStructureBuilderFocus ? <section className={`${SUBPANEL_CLASS} no-print`}>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1">
                       <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Advanced Settings</h4>

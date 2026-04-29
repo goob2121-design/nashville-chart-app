@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 export type SavedChart = {
+  audioAnalysis?: unknown;
   audioFilename?: string;
   audioPath?: string;
   audioUrl?: string;
