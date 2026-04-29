@@ -1604,6 +1604,7 @@ export default function Page() {
   const [analysisTimeSignature, setAnalysisTimeSignature] = useState<TimeSignature | ''>('');
   const [structureChartSections, setStructureChartSections] = useState<StructureChartSection[]>([]);
   const [structureChartMessage, setStructureChartMessage] = useState('');
+  const [copiedStructureRow, setCopiedStructureRow] = useState<string[] | null>(null);
 
   useEffect(() => {
     const mountTimer = window.setTimeout(() => {
@@ -2158,6 +2159,38 @@ export default function Page() {
           : section
       )
     );
+  }
+
+  function handleCopyStructureRow(sectionIndex: number, rowIndex: number) {
+    const row = normalizeStructureRows(
+      structureChartSections[sectionIndex]?.rows,
+      structureChartSections[sectionIndex]?.cells,
+      structureChartSections[sectionIndex]?.bars ?? 4
+    )[rowIndex];
+
+    if (!row) {
+      return;
+    }
+
+    setCopiedStructureRow([...row]);
+    setStructureChartMessage(`Copied ${row.length} bar row.`);
+  }
+
+  function handlePasteStructureRow(sectionIndex: number, rowIndex: number) {
+    if (!copiedStructureRow) {
+      return;
+    }
+
+    setStructureChartSections((sections) =>
+      sections.map((section, currentSectionIndex) =>
+        currentSectionIndex === sectionIndex
+          ? updateStructureRows(section, (rows) =>
+              rows.map((row, currentRowIndex) => (currentRowIndex === rowIndex ? [...copiedStructureRow] : row))
+            )
+          : section
+      )
+    );
+    setStructureChartMessage(`Pasted ${copiedStructureRow.length} bar row.`);
   }
 
   function handleCopyPreviousStructureSection(sectionIndex: number) {
@@ -3502,6 +3535,12 @@ export default function Page() {
                                                     </button>
                                                     <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleAddStructureRow(sectionIndex)}>
                                                       Add new row
+                                                    </button>
+                                                    <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handleCopyStructureRow(sectionIndex, rowIndex)}>
+                                                      Copy Row
+                                                    </button>
+                                                    <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1.5 text-xs`} onClick={() => handlePasteStructureRow(sectionIndex, rowIndex)} disabled={!copiedStructureRow}>
+                                                      Paste Row
                                                     </button>
                                                   </div>
                                                 </div>
