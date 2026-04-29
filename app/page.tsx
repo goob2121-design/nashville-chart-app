@@ -46,6 +46,7 @@ type TimeSignature = (typeof TIME_SIGNATURES)[number];
 type MeasureGridStyle = 'off' | 'simple-bars' | 'beat-dots';
 type UiMode = 'quick' | 'pro';
 type ActiveTextarea = 'input' | 'output';
+type AudioAnalysisStatus = 'Waiting for file' | 'Analyzing...' | 'Analysis complete' | 'Analysis failed';
 type SectionId = 'songSetup' | 'chartBuilder' | 'output' | 'advanced' | 'library';
 type SectionOpenState = Record<SectionId, boolean>;
 
@@ -78,6 +79,7 @@ const SYMBOL_TOOLBAR_STORAGE_KEY = 'nashville-chart-builder:symbol-toolbar-expan
 const SECTION_OPEN_STORAGE_KEY = 'nashville-chart-builder:section-open-state';
 const SYMBOL_CATEGORY_STORAGE_KEY = 'nashville-chart-builder:selected-symbol-category';
 const UI_MODE_STORAGE_KEY = 'nashville-chart-builder:ui-mode';
+const STARTER_TEMPLATE_STORAGE_KEY = 'nashville-chart-builder:starter-template';
 
 const INPUT_CLASS =
   'w-full rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20';
@@ -322,6 +324,75 @@ const TEMPLATE_PRESETS: Record<string, string> = {
 
 [Turnaround]`,
 };
+
+const STARTER_TEMPLATES = {
+  'Bluegrass Instrumental': `[Kickoff]
+| 1 | 1..4 | 1 | 5/1 |
+
+[A Part]
+| 1 | 1..4 | 1 | 5/1 |
+| 7/4 | 1 | 7/4 | 5..^ |
+| 1 | 1..4 | 1 | 1/4 | 5/1 |
+
+[B Part]
+| 4 | 4 | 1 | 1 |
+| 5 | 4 | 1 | 5 |
+
+[Tag]
+| 1 | 5 | 1 |`,
+  'Gospel Song': `[Verse]
+| 1 | 1 | 4 | 1 |
+| 1 | 1 | 5 | 5 |
+| 1 | 1 | 4 | 1 |
+| 1 | 5 | 1 | 1 |
+
+[Chorus]
+| 4 | 4 | 1 | 1 |
+| 1 | 1 | 5 | 5 |
+| 1 | 1 | 4 | 1 |
+| 1 | 5 | 1 | 1 |
+
+[Tag]
+| 1 | 5 | 1 |`,
+  'Verse / Chorus / Tag': `[Verse]
+| 1 | 1 | 4 | 1 |
+| 1 | 1 | 5 | 5 |
+
+[Chorus]
+| 4 | 4 | 1 | 1 |
+| 1 | 5 | 1 | 1 |
+
+[Tag]
+| 1 | 5 | 1 |`,
+  'AABB Fiddle Tune': `[A Part]
+| 1 | 1 | 4 | 1 |
+| 1 | 5 | 1 | 1 |
+[x2]
+
+[B Part]
+| 4 | 4 | 1 | 1 |
+| 5 | 5 | 1 | 1 |
+[x2]`,
+  'Basic Jam Tune': `[Kickoff]
+| 1 | 1 | 1 | 5 |
+
+[Break]
+| 1 | 1 | 4 | 1 |
+| 1 | 5 | 1 | 1 |
+
+[Tag]
+| 1 | 5 | 1 |`,
+  'Waltz / 3/4 Song': `[Verse]
+| 1 | 1 | 4 | 1 |
+| 1 | 1 | 5 | 5 |
+| 1 | 1 | 4 | 1 |
+| 1 | 5 | 1 | 1 |
+
+[Tag]
+| 1 | 5 | 1 |`,
+} as const;
+
+type StarterTemplateName = keyof typeof STARTER_TEMPLATES;
 
 const SMART_REFERENCE_PATTERNS = [
   {
@@ -712,6 +783,123 @@ function extractChordChartFromSheet(text: string) {
     chordLinesFound,
     extracted: extracted.join('\n'),
   };
+}
+
+function estimateBpmFromAudioBuffer(buffer: AudioBuffer) {
+  const sampleRate = buffer.sampleRate;
+  const maxSamples = Math.min(buffer.length, sampleRate * 90);
+  const frameSize = 2048;
+  const hopSize = 512;
+  const frameRate = sampleRate / hopSize;
+  const energies: number[] = [];
+
+  for (let start = 0; start + frameSize < maxSamples; start += hopSize) {
+    let sum = 0;
+
+    for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
+      const channel = buffer.getChannelData(channelIndex);
+
+      for (let sampleIndex = start; sampleIndex < start + frameSize; sampleIndex += 1) {
+        const sample = channel[sampleIndex] ?? 0;
+        sum += sample * sample;
+      }
+    }
+
+    energies.push(Math.sqrt(sum / (frameSize * buffer.numberOfChannels)));
+  }
+
+  if (energies.length < frameRate * 8) {
+    return null;
+  }
+
+  const novelty = energies.map((energy, index) => Math.max(0, energy - (energies[index - 1] ?? energy)));
+  const sortedNovelty = [...novelty].sort((first, second) => first - second);
+  const noiseFloor = sortedNovelty[Math.floor(sortedNovelty.length * 0.55)] ?? 0;
+  const strongOnset = sortedNovelty[Math.floor(sortedNovelty.length * 0.9)] ?? 0;
+  const threshold = noiseFloor + (strongOnset - noiseFloor) * 0.35;
+  const onsetCurve = novelty.map((value) => (value > threshold ? value - threshold : 0));
+
+  if (!onsetCurve.some((value) => value > 0)) {
+    return null;
+  }
+
+  const minBpm = 60;
+  const maxBpm = 200;
+  let bestBpm = 0;
+  let bestScore = 0;
+
+  for (let bpm = minBpm; bpm <= maxBpm; bpm += 1) {
+    const lag = (60 / bpm) * frameRate;
+    let score = 0;
+
+    for (const multiplier of [1, 2, 0.5]) {
+      const scaledLag = Math.round(lag * multiplier);
+
+      if (scaledLag < 1 || scaledLag >= onsetCurve.length) {
+        continue;
+      }
+
+      for (let index = scaledLag; index < onsetCurve.length; index += 1) {
+        score += onsetCurve[index] * onsetCurve[index - scaledLag] * (multiplier === 1 ? 1 : 0.45);
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestBpm = bpm;
+    }
+  }
+
+  return bestScore > 0 ? bestBpm : null;
+}
+
+function estimateKeyFromAudioBuffer(buffer: AudioBuffer): KeyName | null {
+  const channel = buffer.getChannelData(0);
+  const sampleRate = buffer.sampleRate;
+  const windowSize = 2048;
+  const stepSize = Math.max(windowSize, Math.floor(sampleRate * 0.2));
+  const maxSamples = Math.min(channel.length, sampleRate * 75);
+  const chroma = Array.from({ length: 12 }, () => 0);
+
+  for (let start = 0; start + windowSize < maxSamples; start += stepSize) {
+    for (let midi = 36; midi <= 84; midi += 1) {
+      const frequency = 440 * 2 ** ((midi - 69) / 12);
+      const coefficient = (2 * Math.PI * frequency) / sampleRate;
+      let real = 0;
+      let imaginary = 0;
+
+      for (let index = 0; index < windowSize; index += 1) {
+        const sample = channel[start + index] ?? 0;
+        real += sample * Math.cos(coefficient * index);
+        imaginary -= sample * Math.sin(coefficient * index);
+      }
+
+      chroma[midi % 12] += real * real + imaginary * imaginary;
+    }
+  }
+
+  const total = chroma.reduce((sum, value) => sum + value, 0);
+
+  if (!total) {
+    return null;
+  }
+
+  const majorProfile = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+  const keySemitones: Record<KeyName, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  let bestKey: KeyName | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const key of MAJOR_KEYS) {
+    const root = keySemitones[key];
+    const score = majorProfile.reduce((sum, weight, index) => sum + weight * chroma[(root + index) % 12], 0);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestKey = key;
+    }
+  }
+
+  return bestKey;
 }
 
 function convertStrictRoot(root: string, key: KeyName) {
@@ -1219,6 +1407,16 @@ export default function Page() {
   const [activeTextarea, setActiveTextarea] = useState<ActiveTextarea>('output');
   const [sectionOpen, setSectionOpen] = useState<SectionOpenState>(DEFAULT_SECTION_OPEN_STATE);
   const [measureGridStyle, setMeasureGridStyle] = useState<MeasureGridStyle>('off');
+  const [audioAnalyzeExpanded, setAudioAnalyzeExpanded] = useState(false);
+  const [analysisFile, setAnalysisFile] = useState<File | null>(null);
+  const [analysisFileName, setAnalysisFileName] = useState('');
+  const [analysisStatus, setAnalysisStatus] = useState<AudioAnalysisStatus>('Waiting for file');
+  const [estimatedBpm, setEstimatedBpm] = useState<number | null>(null);
+  const [estimatedKey, setEstimatedKey] = useState<KeyName | null>(null);
+  const [analysisBpm, setAnalysisBpm] = useState('');
+  const [analysisKey, setAnalysisKey] = useState<KeyName>(SAMPLE_CHART.key);
+  const [analysisTimeSignature, setAnalysisTimeSignature] = useState<TimeSignature | ''>('');
+  const [selectedStarterTemplate, setSelectedStarterTemplate] = useState<StarterTemplateName>('Bluegrass Instrumental');
 
   useEffect(() => {
     const mountTimer = window.setTimeout(() => {
@@ -1232,6 +1430,7 @@ export default function Page() {
         const storedSectionState = window.localStorage.getItem(SECTION_OPEN_STORAGE_KEY);
         const storedSymbolCategory = window.localStorage.getItem(SYMBOL_CATEGORY_STORAGE_KEY);
         const storedUiMode = window.localStorage.getItem(UI_MODE_STORAGE_KEY);
+        const storedStarterTemplate = window.localStorage.getItem(STARTER_TEMPLATE_STORAGE_KEY);
 
         parsedSavedCharts = dedupeCharts(saved ? (JSON.parse(saved) as SavedChart[]) : []);
         setSavedCharts(parsedSavedCharts);
@@ -1255,6 +1454,10 @@ export default function Page() {
 
         if (storedUiMode === 'quick' || storedUiMode === 'pro') {
           setUiMode(storedUiMode);
+        }
+
+        if (storedStarterTemplate && storedStarterTemplate in STARTER_TEMPLATES) {
+          setSelectedStarterTemplate(storedStarterTemplate as StarterTemplateName);
         }
 
         if (getInitialCloudStatus().connected) {
@@ -1442,6 +1645,132 @@ export default function Page() {
   function handleSetSymbolCategory(category: SymbolCategory) {
     setSelectedSymbolCategory(category);
     window.localStorage.setItem(SYMBOL_CATEGORY_STORAGE_KEY, category);
+  }
+
+  function handleAudioAnalysisFile(file: File | null) {
+    if (!file) {
+      setAnalysisFile(null);
+      setAnalysisFileName('');
+      setEstimatedBpm(null);
+      setEstimatedKey(null);
+      setAnalysisStatus('Waiting for file');
+      return;
+    }
+
+    setAnalysisFile(file);
+    setAnalysisFileName(file.name);
+    setEstimatedBpm(null);
+    setEstimatedKey(null);
+    setAnalysisStatus(/\.(mp3|wav|m4a)$/i.test(file.name) ? 'Waiting for file' : 'Analysis failed');
+  }
+
+  async function handleAnalyzeAudio() {
+    if (!analysisFile || !analysisFileName) {
+      setAnalysisStatus('Waiting for file');
+      return;
+    }
+
+    if (!/\.(mp3|wav|m4a)$/i.test(analysisFileName)) {
+      setAnalysisStatus('Analysis failed');
+      return;
+    }
+
+    setAnalysisStatus('Analyzing...');
+
+    try {
+      const audioContext = new window.AudioContext();
+      const arrayBuffer = await analysisFile.arrayBuffer();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const bpm = estimateBpmFromAudioBuffer(audioBuffer);
+      const key = estimateKeyFromAudioBuffer(audioBuffer);
+      await audioContext.close();
+
+      if (!bpm && !key) {
+        setAnalysisStatus('Analysis failed');
+        return;
+      }
+
+      setEstimatedBpm(bpm);
+      setEstimatedKey(key);
+
+      if (bpm) {
+        setAnalysisBpm(String(bpm));
+      }
+
+      if (key) {
+        setAnalysisKey(key);
+      }
+
+      setAnalysisStatus('Analysis complete');
+    } catch {
+      setAnalysisStatus('Analysis failed');
+    }
+  }
+
+  function handleApplyEstimatedBpm() {
+    if (estimatedBpm) {
+      setTempo(String(estimatedBpm));
+    }
+  }
+
+  function handleApplyEstimatedKey() {
+    if (estimatedKey) {
+      setSelectedKey(estimatedKey);
+      setTransposeToKey(estimatedKey);
+    }
+  }
+
+  function handleApplyAudioAnalysis() {
+    setSelectedKey(analysisKey);
+    setTransposeToKey(analysisKey);
+
+    if (analysisBpm.trim()) {
+      setTempo(analysisBpm.trim());
+    }
+
+    if (analysisTimeSignature) {
+      setTimeSignature(analysisTimeSignature);
+    }
+  }
+
+  function handleSetStarterTemplate(templateName: StarterTemplateName) {
+    setSelectedStarterTemplate(templateName);
+    window.localStorage.setItem(STARTER_TEMPLATE_STORAGE_KEY, templateName);
+  }
+
+  function templateStatusText(action: 'inserted' | 'appended') {
+    return `${selectedStarterTemplate} starter template ${action} for ${selectedKey}, ${timeSignature}${tempo.trim() ? `, ${tempo.trim()} BPM` : ''}.`;
+  }
+
+  function handleInsertStarterTemplate() {
+    const hasContent = input.trim() || output.trim();
+
+    if (hasContent && !window.confirm('Replace the current chart text with this starter template?')) {
+      return;
+    }
+
+    const starterTemplate = STARTER_TEMPLATES[selectedStarterTemplate];
+    setInput(starterTemplate);
+    setOutput(starterTemplate);
+    setSmartPasteMessage(templateStatusText('inserted'));
+  }
+
+  function handleAppendStarterTemplate() {
+    const starterTemplate = STARTER_TEMPLATES[selectedStarterTemplate];
+    setInput((current) => (current.trim() ? `${current.trim()}\n\n${starterTemplate}` : starterTemplate));
+    setOutput((current) => (current.trim() ? `${current.trim()}\n\n${starterTemplate}` : starterTemplate));
+    setSmartPasteMessage(templateStatusText('appended'));
+  }
+
+  function handleClearAudioAnalysis() {
+    setAnalysisFile(null);
+    setAnalysisFileName('');
+    setEstimatedBpm(null);
+    setEstimatedKey(null);
+    setAnalysisBpm('');
+    setAnalysisKey(selectedKey);
+    setAnalysisTimeSignature('');
+    setAnalysisStatus('Waiting for file');
   }
 
   function handleCleanUpInput() {
@@ -2403,6 +2732,128 @@ export default function Page() {
                             Symbol Help
                           </button>
                         </>
+                      ) : null}
+                    </section>
+
+                    <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-medium text-zinc-200">Audio Analyze</h4>
+                          <p className="text-xs text-stone-400">Audio analysis is experimental. Review results by ear.</p>
+                        </div>
+                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => setAudioAnalyzeExpanded((current) => !current)}>
+                          {audioAnalyzeExpanded ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
+
+                      {audioAnalyzeExpanded ? (
+                        <div className="space-y-3">
+                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                            Audio File
+                            <input
+                              className={INPUT_CLASS}
+                              type="file"
+                              accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a"
+                              onChange={(event) => handleAudioAnalysisFile(event.target.files?.[0] ?? null)}
+                            />
+                          </label>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleAnalyzeAudio()} disabled={!analysisFileName || analysisStatus === 'Analyzing...'}>
+                              Analyze Audio
+                            </button>
+                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleClearAudioAnalysis}>
+                              Clear Audio Analysis
+                            </button>
+                            <span className="text-sm text-stone-300">{analysisStatus}</span>
+                          </div>
+                          {analysisStatus === 'Analysis failed' ? (
+                            <p className="text-sm text-amber-200">Could not estimate BPM. Enter manually.</p>
+                          ) : null}
+
+                          {analysisStatus === 'Analysis complete' ? (
+                            <div className="space-y-2 rounded-xl border border-emerald-900/30 bg-emerald-500/10 p-3">
+                              <div className="grid gap-2 text-sm text-stone-200 sm:grid-cols-2 xl:grid-cols-1">
+                                <p className="truncate"><span className="font-medium text-emerald-100">File:</span> {analysisFileName || 'N/A'}</p>
+                                <p><span className="font-medium text-emerald-100">Estimated BPM:</span> {estimatedBpm ? `${estimatedBpm} BPM` : 'N/A'}</p>
+                                <p><span className="font-medium text-emerald-100">Estimated Key:</span> {estimatedKey ?? 'N/A'}</p>
+                                <p><span className="font-medium text-emerald-100">Time:</span> {analysisTimeSignature || 'No change'}</p>
+                              </div>
+                              <p className="text-xs text-stone-400">Review by ear. Key detection is experimental. Select the key manually if needed.</p>
+                              <div className="flex flex-wrap gap-2">
+                                {estimatedBpm ? (
+                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyEstimatedBpm}>
+                                    Apply BPM to Chart
+                                  </button>
+                                ) : null}
+                                {estimatedKey ? (
+                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyEstimatedKey}>
+                                    Apply Key to Chart
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : analysisFileName ? (
+                            <p className="truncate text-xs text-stone-400">File: {analysisFileName}</p>
+                          ) : null}
+
+                          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                              Manual BPM
+                              <input className={INPUT_CLASS} inputMode="numeric" placeholder="120" value={analysisBpm} onChange={(event) => setAnalysisBpm(event.target.value)} />
+                            </label>
+                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                              Likely Key
+                              <select className={INPUT_CLASS} value={analysisKey} onChange={(event) => setAnalysisKey(event.target.value as KeyName)}>
+                                {MAJOR_KEYS.map((key) => (
+                                  <option key={key} value={key}>
+                                    {key}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                              Time Signature
+                              <select className={INPUT_CLASS} value={analysisTimeSignature} onChange={(event) => setAnalysisTimeSignature(event.target.value as TimeSignature | '')}>
+                                <option value="">No change</option>
+                                {TIME_SIGNATURES.map((signature) => (
+                                  <option key={signature} value={signature}>
+                                    {signature}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+
+                          <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleApplyAudioAnalysis}>
+                            Apply Manual Values
+                          </button>
+
+                          <section className="space-y-3 rounded-xl border border-amber-950/20 bg-stone-950/45 p-3">
+                            <div className="space-y-1">
+                              <h5 className="text-sm font-medium text-zinc-200">Starter Template</h5>
+                              <p className="text-xs text-stone-500">Starter template only; this is not an AI transcription.</p>
+                            </div>
+                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                              Template
+                              <select className={INPUT_CLASS} value={selectedStarterTemplate} onChange={(event) => handleSetStarterTemplate(event.target.value as StarterTemplateName)}>
+                                {Object.keys(STARTER_TEMPLATES).map((templateName) => (
+                                  <option key={templateName} value={templateName}>
+                                    {templateName}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleInsertStarterTemplate}>
+                                Insert Template
+                              </button>
+                              <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAppendStarterTemplate}>
+                                Append Template
+                              </button>
+                            </div>
+                          </section>
+                        </div>
                       ) : null}
                     </section>
 
