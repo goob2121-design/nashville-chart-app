@@ -11,7 +11,7 @@ export function BrandHeaderTitle({ subtitle }: { subtitle?: string }) {
       <img
         src={LOGO_SRC}
         alt="Pinnacle Recording Studio"
-        className="h-auto w-12 shrink-0 sm:w-16"
+        className="h-auto w-14 shrink-0 sm:w-[4.5rem]"
       />
       <div className="min-w-0">
         <h1 className="text-2xl font-semibold text-white sm:text-4xl">Pinnacle Recording Studio Chart System</h1>

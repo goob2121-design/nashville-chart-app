@@ -86,7 +86,6 @@ const SYMBOL_TOOLBAR_STORAGE_KEY = 'nashville-chart-builder:symbol-toolbar-expan
 const SECTION_OPEN_STORAGE_KEY = 'nashville-chart-builder:section-open-state';
 const SYMBOL_CATEGORY_STORAGE_KEY = 'nashville-chart-builder:selected-symbol-category';
 const UI_MODE_STORAGE_KEY = 'nashville-chart-builder:ui-mode';
-const STARTER_TEMPLATE_STORAGE_KEY = 'nashville-chart-builder:starter-template';
 const AUDIO_ANALYZE_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:audio-analyze-expanded';
 
 const INPUT_CLASS =
@@ -102,7 +101,6 @@ const PRIMARY_BUTTON_CLASS =
 const EMPHASIS_BUTTON_CLASS =
   'rounded-xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-stone-950 transition hover:bg-emerald-300';
 
-const TIME_SIGNATURE_QUICK_CHOICES: TimeSignature[] = ['2/4', '3/4', '4/4', '6/8'];
 const FEEL_QUICK_CHOICES = ['Straight', 'Swing', 'Shuffle', 'Waltz'] as const;
 
 const DEFAULT_SECTION_OPEN_STATE: SectionOpenState = {
@@ -335,75 +333,6 @@ const TEMPLATE_PRESETS: Record<string, string> = {
 
 [Turnaround]`,
 };
-
-const STARTER_TEMPLATES = {
-  'Bluegrass Instrumental': `[Kickoff]
-| 1 | 1..4 | 1 | 5/1 |
-
-[A Part]
-| 1 | 1..4 | 1 | 5/1 |
-| 7/4 | 1 | 7/4 | 5..^ |
-| 1 | 1..4 | 1 | 1/4 | 5/1 |
-
-[B Part]
-| 4 | 4 | 1 | 1 |
-| 5 | 4 | 1 | 5 |
-
-[Tag]
-| 1 | 5 | 1 |`,
-  'Gospel Song': `[Verse]
-| 1 | 1 | 4 | 1 |
-| 1 | 1 | 5 | 5 |
-| 1 | 1 | 4 | 1 |
-| 1 | 5 | 1 | 1 |
-
-[Chorus]
-| 4 | 4 | 1 | 1 |
-| 1 | 1 | 5 | 5 |
-| 1 | 1 | 4 | 1 |
-| 1 | 5 | 1 | 1 |
-
-[Tag]
-| 1 | 5 | 1 |`,
-  'Verse / Chorus / Tag': `[Verse]
-| 1 | 1 | 4 | 1 |
-| 1 | 1 | 5 | 5 |
-
-[Chorus]
-| 4 | 4 | 1 | 1 |
-| 1 | 5 | 1 | 1 |
-
-[Tag]
-| 1 | 5 | 1 |`,
-  'AABB Fiddle Tune': `[A Part]
-| 1 | 1 | 4 | 1 |
-| 1 | 5 | 1 | 1 |
-[x2]
-
-[B Part]
-| 4 | 4 | 1 | 1 |
-| 5 | 5 | 1 | 1 |
-[x2]`,
-  'Basic Jam Tune': `[Kickoff]
-| 1 | 1 | 1 | 5 |
-
-[Break]
-| 1 | 1 | 4 | 1 |
-| 1 | 5 | 1 | 1 |
-
-[Tag]
-| 1 | 5 | 1 |`,
-  'Waltz / 3/4 Song': `[Verse]
-| 1 | 1 | 4 | 1 |
-| 1 | 1 | 5 | 5 |
-| 1 | 1 | 4 | 1 |
-| 1 | 5 | 1 | 1 |
-
-[Tag]
-| 1 | 5 | 1 |`,
-} as const;
-
-type StarterTemplateName = keyof typeof STARTER_TEMPLATES;
 
 const SMART_REFERENCE_PATTERNS = [
   {
@@ -1280,6 +1209,9 @@ export default function Page() {
   const [saveLabel, setSaveLabel] = useState('Save Chart');
   const [saveStatusMessage, setSaveStatusMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [showSaveToast, setShowSaveToast] = useState(false);
+  const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
+  const [, setLastSavedSnapshot] = useState(() => JSON.stringify(SAMPLE_CHART));
   const [hasMounted, setHasMounted] = useState(false);
   const [savedCharts, setSavedCharts] = useState<SavedChart[]>([]);
   const [selectedSavedChartId, setSelectedSavedChartId] = useState('');
@@ -1294,7 +1226,6 @@ export default function Page() {
   const [symbolsExpanded, setSymbolsExpanded] = useState(false);
   const [selectedSymbolCategory, setSelectedSymbolCategory] = useState<SymbolCategory>('Common');
   const [isSymbolHelpOpen, setIsSymbolHelpOpen] = useState(false);
-  const [templatesExpanded, setTemplatesExpanded] = useState(false);
   const [activeTextarea, setActiveTextarea] = useState<ActiveTextarea>('output');
   const [sectionOpen, setSectionOpen] = useState<SectionOpenState>(DEFAULT_SECTION_OPEN_STATE);
   const [measureGridStyle, setMeasureGridStyle] = useState<MeasureGridStyle>('off');
@@ -1307,7 +1238,6 @@ export default function Page() {
   const [analysisBpm, setAnalysisBpm] = useState('');
   const [analysisKey, setAnalysisKey] = useState<KeyName>(SAMPLE_CHART.key);
   const [analysisTimeSignature, setAnalysisTimeSignature] = useState<TimeSignature | ''>('');
-  const [selectedStarterTemplate, setSelectedStarterTemplate] = useState<StarterTemplateName>('Bluegrass Instrumental');
 
   useEffect(() => {
     const mountTimer = window.setTimeout(() => {
@@ -1321,7 +1251,6 @@ export default function Page() {
         const storedSectionState = window.localStorage.getItem(SECTION_OPEN_STORAGE_KEY);
         const storedSymbolCategory = window.localStorage.getItem(SYMBOL_CATEGORY_STORAGE_KEY);
         const storedUiMode = window.localStorage.getItem(UI_MODE_STORAGE_KEY);
-        const storedStarterTemplate = window.localStorage.getItem(STARTER_TEMPLATE_STORAGE_KEY);
         const storedAudioAnalyzeExpanded = window.localStorage.getItem(AUDIO_ANALYZE_EXPANDED_STORAGE_KEY);
 
         parsedSavedCharts = dedupeCharts(saved ? (JSON.parse(saved) as SavedChart[]) : []);
@@ -1348,12 +1277,10 @@ export default function Page() {
           setUiMode(storedUiMode);
         }
 
-        if (storedStarterTemplate && storedStarterTemplate in STARTER_TEMPLATES) {
-          setSelectedStarterTemplate(storedStarterTemplate as StarterTemplateName);
-        }
-
         if (storedAudioAnalyzeExpanded === 'true' || storedAudioAnalyzeExpanded === 'false') {
           setAudioAnalyzeExpanded(storedAudioAnalyzeExpanded === 'true');
+        } else {
+          setAudioAnalyzeExpanded(false);
         }
 
         if (getInitialCloudStatus().connected) {
@@ -1474,6 +1401,7 @@ export default function Page() {
     setChartMode(chart.chartMode);
     setInput(chart.chordChart);
     setOutput(chart.nashvilleChart);
+    setLastSavedSnapshot(JSON.stringify(toChartSnapshot(chart)));
   }
 
   function applyAudioAttachment(fields: Pick<ChartSnapshot, 'audioFilename' | 'audioPath' | 'audioUrl'>) {
@@ -1635,35 +1563,6 @@ export default function Page() {
     if (analysisTimeSignature) {
       setTimeSignature(analysisTimeSignature);
     }
-  }
-
-  function handleSetStarterTemplate(templateName: StarterTemplateName) {
-    setSelectedStarterTemplate(templateName);
-    window.localStorage.setItem(STARTER_TEMPLATE_STORAGE_KEY, templateName);
-  }
-
-  function templateStatusText(action: 'inserted' | 'appended') {
-    return `${selectedStarterTemplate} starter template ${action} for ${selectedKey}, ${timeSignature}${tempo.trim() ? `, ${tempo.trim()} BPM` : ''}.`;
-  }
-
-  function handleInsertStarterTemplate() {
-    const hasContent = input.trim() || output.trim();
-
-    if (hasContent && !window.confirm('Replace the current chart text with this starter template?')) {
-      return;
-    }
-
-    const starterTemplate = STARTER_TEMPLATES[selectedStarterTemplate];
-    setInput(starterTemplate);
-    setOutput(starterTemplate);
-    setSmartPasteMessage(templateStatusText('inserted'));
-  }
-
-  function handleAppendStarterTemplate() {
-    const starterTemplate = STARTER_TEMPLATES[selectedStarterTemplate];
-    setInput((current) => (current.trim() ? `${current.trim()}\n\n${starterTemplate}` : starterTemplate));
-    setOutput((current) => (current.trim() ? `${current.trim()}\n\n${starterTemplate}` : starterTemplate));
-    setSmartPasteMessage(templateStatusText('appended'));
   }
 
   function handleClearAudioAnalysis() {
@@ -1844,13 +1743,19 @@ export default function Page() {
     setIsSaving(true);
     setSaveLabel('Saving...');
     setSaveStatusMessage('');
+    setShowSaveToast(false);
 
     try {
       const savedChart = await saveChartRecord();
-      const savedDate = new Date(savedChart.savedAt);
+      setLastSavedSnapshot(JSON.stringify(toChartSnapshot(savedChart)));
+      setShowSaveToast(true);
       setSaveLabel('Saved ✓');
-      setSaveStatusMessage(Number.isNaN(savedDate.getTime()) ? 'Last saved just now' : `Last saved at ${savedDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
-      window.setTimeout(() => setSaveLabel('Save Chart'), 1800);
+      setSaveStatusMessage('Saved ✓');
+      window.setTimeout(() => {
+        setSaveLabel('Save Chart');
+        setSaveStatusMessage('');
+        setShowSaveToast(false);
+      }, 1800);
     } catch {
       setSaveLabel('Save failed');
       setSaveStatusMessage('Save failed. Try again.');
@@ -1952,8 +1857,9 @@ export default function Page() {
 
   async function handleDeleteChart() {
     const chart = savedCharts.find((item) => item.id === selectedSavedChartId);
+    const chartName = chart?.title?.trim() || chart?.artist?.trim() || chart?.id;
 
-    if (!chart || !window.confirm(`Delete saved chart "${chart.id}"?`)) {
+    if (!chart || !window.confirm(`Delete saved chart "${chartName}"?`)) {
       return;
     }
 
@@ -2087,6 +1993,12 @@ export default function Page() {
 
       {performanceOverlay}
 
+      {showSaveToast ? (
+        <div className="no-print fixed bottom-4 right-4 z-40 rounded-xl border border-emerald-500/30 bg-stone-950/95 px-4 py-3 text-sm font-medium text-emerald-200 shadow-xl shadow-black/25">
+          Saved ✓
+        </div>
+      ) : null}
+
       {isSymbolHelpOpen ? (
         <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
           <section className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-amber-950/40 bg-stone-950 p-5 text-stone-100 shadow-2xl shadow-black/40">
@@ -2125,19 +2037,37 @@ export default function Page() {
       ) : null}
 
       <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_28%),linear-gradient(180deg,_#1c1917_0%,_#0c0a09_48%,_#020617_100%)] px-4 py-8 text-stone-100 sm:px-6 sm:py-12 print:bg-white print:px-0 print:py-0 print:text-black">
-        <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 print:max-w-none print:gap-4">
+        <div className="mx-auto flex w-full max-w-[1520px] flex-col gap-6 print:max-w-none print:gap-4">
           <div className="no-print space-y-4">
             <div className="space-y-2">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <BrandHeaderTitle />
-                <nav className="flex flex-wrap gap-2">
-                  <Link href="/library" className={SECONDARY_BUTTON_CLASS}>
-                    Song Library
-                  </Link>
-                  <Link href="/setlists" className={SECONDARY_BUTTON_CLASS}>
-                    Setlists
-                  </Link>
-                </nav>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <div className="inline-flex rounded-full border border-amber-950/30 bg-stone-950/70 p-1 shadow-lg shadow-black/10">
+                    <button
+                      type="button"
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition sm:px-4 ${uiMode === 'quick' ? 'bg-amber-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
+                      onClick={() => handleSetUiMode('quick')}
+                    >
+                      Quick
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition sm:px-4 ${uiMode === 'pro' ? 'bg-emerald-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
+                      onClick={() => handleSetUiMode('pro')}
+                    >
+                      Pro
+                    </button>
+                  </div>
+                  <nav className="flex flex-wrap gap-2">
+                    <Link href="/library" className={SECONDARY_BUTTON_CLASS}>
+                      Song Library
+                    </Link>
+                    <Link href="/setlists" className={SECONDARY_BUTTON_CLASS}>
+                      Setlists
+                    </Link>
+                  </nav>
+                </div>
               </div>
               <p className="max-w-3xl text-sm leading-6 text-stone-300">
                 Build bluegrass-friendly charts with a focused Quick Mode for fast song setup, or switch to Pro Mode when you need the full charting toolkit.
@@ -2147,34 +2077,9 @@ export default function Page() {
               </p>
               {cloudMessage ? <p className="text-sm text-stone-300">{cloudMessage}</p> : null}
             </div>
-
-            <section className={`${PANEL_CLASS} p-4 sm:p-5`}>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Workspace Mode</h2>
-                  <p className="mt-1 text-xs text-stone-400">Quick Mode keeps the essentials on screen. Pro Mode unlocks the full chart workflow.</p>
-                </div>
-                <div className="inline-flex rounded-2xl border border-amber-950/30 bg-stone-950/60 p-1">
-                  <button
-                    type="button"
-                    className={`rounded-xl px-4 py-2 text-sm font-medium transition ${uiMode === 'quick' ? 'bg-amber-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
-                    onClick={() => handleSetUiMode('quick')}
-                  >
-                    Quick Mode
-                  </button>
-                  <button
-                    type="button"
-                    className={`rounded-xl px-4 py-2 text-sm font-medium transition ${uiMode === 'pro' ? 'bg-emerald-400 text-stone-950' : 'text-stone-200 hover:bg-stone-900/80'}`}
-                    onClick={() => handleSetUiMode('pro')}
-                  >
-                    Pro Mode
-                  </button>
-                </div>
-              </div>
-            </section>
           </div>
 
-          <div className={`grid gap-6 print:grid-cols-1 ${isQuickMode ? 'grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_380px]'}`}>
+          <div className="grid gap-6 print:grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
             <section className={`no-print order-1 space-y-5 ${PANEL_CLASS}`}>
               <SectionCard
                 title="Song Setup"
@@ -2182,85 +2087,22 @@ export default function Page() {
                 isOpen={sectionOpen.songSetup}
                 onToggle={() => handleToggleSection('songSetup')}
               >
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                    Title
-                    <input className={INPUT_CLASS} value={songTitle} onChange={(event) => setSongTitle(event.target.value)} />
-                  </label>
-                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                    Artist
-                    <input className={INPUT_CLASS} value={artist} onChange={(event) => setArtist(event.target.value)} />
-                  </label>
-                </div>
-
-                <div className={`grid gap-4 ${isQuickMode ? 'sm:grid-cols-2' : 'lg:grid-cols-3'}`}>
-                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                    Key
-                    <select className={INPUT_CLASS} value={selectedKey} onChange={(event) => setSelectedKey(event.target.value as KeyName)}>
-                      {MAJOR_KEYS.map((key) => (
-                        <option key={key} value={key}>
-                          {key}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                    Time Signature
-                    <select className={INPUT_CLASS} value={timeSignature} onChange={(event) => setTimeSignature(event.target.value as TimeSignature)}>
-                      {TIME_SIGNATURES.map((signature) => (
-                        <option key={signature} value={signature}>
-                          {signature}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {!isQuickMode ? (
+                <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                      Tempo / BPM
-                      <input className={INPUT_CLASS} placeholder="120 BPM" value={tempo} onChange={(event) => setTempo(event.target.value)} />
-                    </label>
-                  ) : null}
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {TIME_SIGNATURE_QUICK_CHOICES.map((signature) => (
-                    <button
-                      key={signature}
-                      type="button"
-                      className={`${SECONDARY_BUTTON_CLASS} ${timeSignature === signature ? 'border-amber-400 bg-amber-500/10 text-amber-100' : ''}`}
-                      onClick={() => setTimeSignature(signature)}
-                    >
-                      {signature}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    className={`${SECONDARY_BUTTON_CLASS} ${timeSignature === 'Cut Time' ? 'border-amber-400 bg-amber-500/10 text-amber-100' : ''}`}
-                    onClick={() => setTimeSignature('Cut Time')}
-                  >
-                    Cut Time
-                  </button>
-                </div>
-
-                {!isQuickMode ? (
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
-                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                      Capo
-                      <input className={INPUT_CLASS} inputMode="numeric" placeholder="0" value={capo} onChange={(event) => setCapo(event.target.value.replace(/[^\d]/g, ''))} />
+                      Title
+                      <input className={INPUT_CLASS} value={songTitle} onChange={(event) => setSongTitle(event.target.value)} />
                     </label>
                     <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                      Feel
-                      <select className={INPUT_CLASS} value={feel} onChange={(event) => setFeel(event.target.value)}>
-                        {FEEL_OPTIONS.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
+                      Artist
+                      <input className={INPUT_CLASS} value={artist} onChange={(event) => setArtist(event.target.value)} />
                     </label>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-3">
                     <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                      Transpose To Key
-                      <select className={INPUT_CLASS} value={transposeToKey} onChange={(event) => setTransposeToKey(event.target.value as KeyName)}>
+                      Key
+                      <select className={INPUT_CLASS} value={selectedKey} onChange={(event) => setSelectedKey(event.target.value as KeyName)}>
                         {MAJOR_KEYS.map((key) => (
                           <option key={key} value={key}>
                             {key}
@@ -2268,34 +2110,109 @@ export default function Page() {
                         ))}
                       </select>
                     </label>
-                    <div className="rounded-2xl border border-amber-950/25 bg-amber-500/10 p-4 text-sm leading-6 text-stone-200">
-                      <p>
-                        <span className="font-medium text-amber-100">Key:</span> {selectedKey}
-                      </p>
-                      <p>
-                        <span className="font-medium text-amber-100">Capo:</span> {capo || '0'}
-                      </p>
-                      <p>
-                        <span className="font-medium text-amber-100">Play In:</span> {playInKey}
-                      </p>
-                    </div>
+                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                      BPM
+                      <input className={INPUT_CLASS} inputMode="numeric" placeholder="120" value={tempo} onChange={(event) => setTempo(event.target.value)} />
+                    </label>
+                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                      Time Signature
+                      <select className={INPUT_CLASS} value={timeSignature} onChange={(event) => setTimeSignature(event.target.value as TimeSignature)}>
+                        {TIME_SIGNATURES.map((signature) => (
+                          <option key={signature} value={signature}>
+                            {signature}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
-                ) : null}
 
-                {!isQuickMode ? (
-                  <div className="flex flex-wrap gap-2">
-                    {FEEL_QUICK_CHOICES.map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        className={`${SECONDARY_BUTTON_CLASS} ${feel === option ? 'border-amber-400 bg-amber-500/10 text-amber-100' : ''}`}
-                        onClick={() => setFeel(option)}
-                      >
-                        {option}
-                      </button>
-                    ))}
+                </section>
+
+                <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">More Options</h3>
+                      <p className="text-xs text-stone-400">Arrangement helpers, tags, notes, and audio tools live here when you need them.</p>
+                    </div>
+                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => setMoreOptionsOpen((current) => !current)}>
+                      {moreOptionsOpen ? 'Hide More Options' : 'Show More Options'}
+                    </button>
                   </div>
-                ) : null}
+
+                  {moreOptionsOpen ? (
+                    <div className="space-y-4">
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)]">
+                        <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                          Feel
+                          <select className={INPUT_CLASS} value={feel} onChange={(event) => setFeel(event.target.value)}>
+                            {FEEL_OPTIONS.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                          Capo
+                          <input className={INPUT_CLASS} inputMode="numeric" placeholder="0" value={capo} onChange={(event) => setCapo(event.target.value.replace(/[^\d]/g, ''))} />
+                        </label>
+                        <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                          Transpose To Key
+                          <select className={INPUT_CLASS} value={transposeToKey} onChange={(event) => setTransposeToKey(event.target.value as KeyName)}>
+                            {MAJOR_KEYS.map((key) => (
+                              <option key={key} value={key}>
+                                {key}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="rounded-2xl border border-amber-950/25 bg-amber-500/10 p-4 text-sm leading-6 text-stone-200">
+                          <p>
+                            <span className="font-medium text-amber-100">Key:</span> {selectedKey}
+                          </p>
+                          <p>
+                            <span className="font-medium text-amber-100">Capo:</span> {capo || '0'}
+                          </p>
+                          <p>
+                            <span className="font-medium text-amber-100">Play In:</span> {playInKey}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {FEEL_QUICK_CHOICES.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            className={`${SECONDARY_BUTTON_CLASS} ${feel === option ? 'border-amber-400 bg-amber-500/10 text-amber-100' : ''}`}
+                            onClick={() => setFeel(option)}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
+
+                      <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-stone-950/45 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h4 className="text-sm font-medium text-zinc-200">Tags & References</h4>
+                            <p className="mt-1 text-xs text-stone-400">Open the symbol toolbar for section tags, repeats, endings, and bluegrass shorthand.</p>
+                          </div>
+                          <button
+                            type="button"
+                            className={SECONDARY_BUTTON_CLASS}
+                            onClick={() => {
+                              setSymbolsExpanded(true);
+                            }}
+                          >
+                            Open Tag Tools
+                          </button>
+                        </div>
+                      </section>
+
+                    </div>
+                  ) : null}
+                </section>
               </SectionCard>
 
 
@@ -2360,7 +2277,7 @@ export default function Page() {
                 </div>
 
                 {smartPasteMessage ? <p className="text-sm text-zinc-300">{smartPasteMessage}</p> : null}
-                {saveStatusMessage ? <p className="text-sm text-stone-300">{saveStatusMessage}</p> : null}
+                {saveStatusMessage ? <p className="text-xs text-stone-500">{saveStatusMessage}</p> : null}
 
                 <p className="text-xs leading-5 text-stone-400">
                   Grid mode makes each measure/bar easier to see. A dot means hold the previous chord for one beat.
@@ -2431,7 +2348,7 @@ export default function Page() {
                   <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={() => setPerformanceMode(true)}>Performance Mode</button>
                   <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={handleOpenPrintView}>Print / PDF</button>
                 </div>
-                {saveStatusMessage ? <p className="text-sm text-stone-300">{saveStatusMessage}</p> : null}
+                {saveStatusMessage ? <p className="text-xs text-stone-500">{saveStatusMessage}</p> : null}
                 {chartAudioDownloadUrl && audioFilename.trim() ? (
                   <p className="text-sm text-stone-400">MP3: {audioFilename}</p>
                 ) : null}
@@ -2462,7 +2379,7 @@ export default function Page() {
                       </button>
                     ) : null}
                   </div>
-                  {saveStatusMessage ? <p className="text-sm text-stone-300">{saveStatusMessage}</p> : null}
+                  {saveStatusMessage ? <p className="text-xs text-stone-500">{saveStatusMessage}</p> : null}
 
                   {shareUrl ? (
                     showManualShareUrl ? (
@@ -2590,26 +2507,7 @@ export default function Page() {
               ) : null}
             </section>
 
-            <section className={`order-2 ${PANEL_CLASS} ${isQuickMode ? '' : 'xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto'} print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
-              <div className="space-y-3 border-b border-amber-950/30 pb-4 print:hidden print:border-zinc-300">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-2xl font-semibold text-white print:text-black">{songTitle || 'Untitled Song'}</h2>
-                  {hasAttachedAudio ? (
-                    <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
-                      MP3
-                    </span>
-                  ) : null}
-                </div>
-                <div className="grid gap-2 text-sm text-stone-300 sm:grid-cols-2 lg:grid-cols-3 print:text-black">
-                  <p><span className="font-medium text-zinc-100 print:text-black">Artist:</span> {artist || 'N/A'}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Key:</span> {selectedKey}</p>
-                  <p><span className="font-medium text-zinc-100 print:text-black">Time:</span> {timeSignature}</p>
-                  {!isQuickMode ? <p><span className="font-medium text-zinc-100 print:text-black">Play In:</span> {playInKey}</p> : null}
-                  {!isQuickMode ? <p><span className="font-medium text-zinc-100 print:text-black">Tempo:</span> {tempo || 'N/A'}</p> : null}
-                  {!isQuickMode ? <p><span className="font-medium text-zinc-100 print:text-black">Capo:</span> {capo || '0'}</p> : null}
-                </div>
-              </div>
-
+            <section className={`order-2 ${PANEL_CLASS} xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none`}>
               <div className="print-only border-b border-zinc-300 pb-2 text-black">
                 <h2 className="text-xl font-semibold">{songTitle || 'Untitled Song'}</h2>
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm leading-5">
@@ -2621,21 +2519,112 @@ export default function Page() {
                 </div>
               </div>
 
-              <div className="mt-5 space-y-4 print:mt-2 print:space-y-2">
+              <div className="mt-4 space-y-3 print:mt-2 print:space-y-2">
+                {!isQuickMode ? (
+                  <section className={`${SUBPANEL_CLASS} no-print`}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Audio Analyze</h4>
+                        <p className="text-xs text-stone-400">Audio analysis is experimental. Review results by ear.</p>
+                      </div>
+                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleToggleAudioAnalyzeExpanded}>
+                        {audioAnalyzeExpanded ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
 
+                    {audioAnalyzeExpanded ? (
+                      <div className="mt-4 space-y-3">
+                        <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                          Audio File
+                          <input
+                            className={INPUT_CLASS}
+                            type="file"
+                            accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a"
+                            onChange={(event) => handleAudioAnalysisFile(event.target.files?.[0] ?? null)}
+                          />
+                        </label>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleAnalyzeAudio()} disabled={!analysisFileName || analysisStatus === 'Analyzing...'}>
+                            Analyze Audio
+                          </button>
+                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleClearAudioAnalysis}>
+                            Clear Audio Analysis
+                          </button>
+                          <span className="text-sm text-stone-300">{analysisStatus}</span>
+                        </div>
+                        {analysisStatus === 'Analysis failed' ? (
+                          <p className="text-sm text-amber-200">Could not estimate BPM. Enter manually.</p>
+                        ) : null}
+
+                        {analysisStatus === 'Analysis complete' ? (
+                          <div className="space-y-2 rounded-xl border border-emerald-900/30 bg-emerald-500/10 p-3">
+                            <div className="grid gap-2 text-sm text-stone-200 sm:grid-cols-2 xl:grid-cols-1">
+                              <p className="truncate"><span className="font-medium text-emerald-100">File:</span> {analysisFileName || 'N/A'}</p>
+                              <p><span className="font-medium text-emerald-100">Estimated BPM:</span> {estimatedBpm ? `${estimatedBpm} BPM` : 'N/A'}</p>
+                              <p><span className="font-medium text-emerald-100">Estimated Key:</span> {estimatedKey ?? 'N/A'}</p>
+                              <p><span className="font-medium text-emerald-100">Time:</span> {analysisTimeSignature || 'No change'}</p>
+                            </div>
+                            <p className="text-xs text-stone-400">Review by ear. Key detection is experimental. Select the key manually if needed.</p>
+                            <div className="flex flex-wrap gap-2">
+                              {estimatedBpm ? (
+                                <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyEstimatedBpm}>
+                                  Apply BPM to Chart
+                                </button>
+                              ) : null}
+                              {estimatedKey ? (
+                                <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyEstimatedKey}>
+                                  Apply Key to Chart
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : analysisFileName ? (
+                          <p className="truncate text-xs text-stone-400">File: {analysisFileName}</p>
+                        ) : null}
+
+                        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                            Manual BPM
+                            <input className={INPUT_CLASS} inputMode="numeric" placeholder="120" value={analysisBpm} onChange={(event) => setAnalysisBpm(event.target.value)} />
+                          </label>
+                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                            Likely Key
+                            <select className={INPUT_CLASS} value={analysisKey} onChange={(event) => setAnalysisKey(event.target.value as KeyName)}>
+                              {MAJOR_KEYS.map((key) => (
+                                <option key={key} value={key}>
+                                  {key}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                            Time Signature
+                            <select className={INPUT_CLASS} value={analysisTimeSignature} onChange={(event) => setAnalysisTimeSignature(event.target.value as TimeSignature | '')}>
+                              <option value="">No change</option>
+                              {TIME_SIGNATURES.map((signature) => (
+                                <option key={signature} value={signature}>
+                                  {signature}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+
+                        <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleApplyAudioAnalysis}>
+                          Apply Manual Values
+                        </button>
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
 
                 {!isQuickMode ? <section className={`${SUBPANEL_CLASS} no-print`}>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                      <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Symbols & Advanced Tools</h4>
-                      <p className="text-xs text-stone-400">Work with chart shorthand, transposition, notes, templates, and advanced Nashville settings.</p>
-                    </div>
-                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleToggleSection('advanced')}>
-                      {sectionOpen.advanced ? 'Hide' : 'Show'}
-                    </button>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Symbols & Advanced Tools</h4>
+                    <p className="text-xs text-stone-400">Insert chart shorthand and section tags into the active editor.</p>
                   </div>
-
-                  {sectionOpen.advanced ? <div className="mt-4 space-y-4">
+                  <div className="mt-4 space-y-4">
                     <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -2677,165 +2666,40 @@ export default function Page() {
                         </>
                       ) : null}
                     </section>
+                  </div>
+                </section> : null}
 
-                    <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="space-y-1">
-                          <h4 className="text-sm font-medium text-zinc-200">Audio Analyze</h4>
-                          <p className="text-xs text-stone-400">Audio analysis is experimental. Review results by ear.</p>
-                        </div>
-                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleToggleAudioAnalyzeExpanded}>
-                          {audioAnalyzeExpanded ? 'Hide' : 'Show'}
-                        </button>
-                      </div>
+                {!isQuickMode ? (
+                  <section className={`${SUBPANEL_CLASS} no-print`}>
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Notes</h4>
+                      <p className="text-xs text-stone-400">Keep arrangement notes, reminders, and performance cues with the chart.</p>
+                    </div>
+                    <textarea
+                      className={`${INPUT_CLASS} min-h-28 text-sm leading-6`}
+                      value={notes}
+                      onChange={(event) => setNotes(event.target.value)}
+                      placeholder="Arrangement notes, breaks, endings, or reminders for the band."
+                    />
+                  </section>
+                ) : null}
 
-                      {audioAnalyzeExpanded ? (
-                        <div className="space-y-3">
-                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                            Audio File
-                            <input
-                              className={INPUT_CLASS}
-                              type="file"
-                              accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a"
-                              onChange={(event) => handleAudioAnalysisFile(event.target.files?.[0] ?? null)}
-                            />
-                          </label>
-
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleAnalyzeAudio()} disabled={!analysisFileName || analysisStatus === 'Analyzing...'}>
-                              Analyze Audio
-                            </button>
-                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleClearAudioAnalysis}>
-                              Clear Audio Analysis
-                            </button>
-                            <span className="text-sm text-stone-300">{analysisStatus}</span>
-                          </div>
-                          {analysisStatus === 'Analysis failed' ? (
-                            <p className="text-sm text-amber-200">Could not estimate BPM. Enter manually.</p>
-                          ) : null}
-
-                          {analysisStatus === 'Analysis complete' ? (
-                            <div className="space-y-2 rounded-xl border border-emerald-900/30 bg-emerald-500/10 p-3">
-                              <div className="grid gap-2 text-sm text-stone-200 sm:grid-cols-2 xl:grid-cols-1">
-                                <p className="truncate"><span className="font-medium text-emerald-100">File:</span> {analysisFileName || 'N/A'}</p>
-                                <p><span className="font-medium text-emerald-100">Estimated BPM:</span> {estimatedBpm ? `${estimatedBpm} BPM` : 'N/A'}</p>
-                                <p><span className="font-medium text-emerald-100">Estimated Key:</span> {estimatedKey ?? 'N/A'}</p>
-                                <p><span className="font-medium text-emerald-100">Time:</span> {analysisTimeSignature || 'No change'}</p>
-                              </div>
-                              <p className="text-xs text-stone-400">Review by ear. Key detection is experimental. Select the key manually if needed.</p>
-                              <div className="flex flex-wrap gap-2">
-                                {estimatedBpm ? (
-                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyEstimatedBpm}>
-                                    Apply BPM to Chart
-                                  </button>
-                                ) : null}
-                                {estimatedKey ? (
-                                  <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyEstimatedKey}>
-                                    Apply Key to Chart
-                                  </button>
-                                ) : null}
-                              </div>
-                            </div>
-                          ) : analysisFileName ? (
-                            <p className="truncate text-xs text-stone-400">File: {analysisFileName}</p>
-                          ) : null}
-
-                          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                              Manual BPM
-                              <input className={INPUT_CLASS} inputMode="numeric" placeholder="120" value={analysisBpm} onChange={(event) => setAnalysisBpm(event.target.value)} />
-                            </label>
-                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                              Likely Key
-                              <select className={INPUT_CLASS} value={analysisKey} onChange={(event) => setAnalysisKey(event.target.value as KeyName)}>
-                                {MAJOR_KEYS.map((key) => (
-                                  <option key={key} value={key}>
-                                    {key}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                              Time Signature
-                              <select className={INPUT_CLASS} value={analysisTimeSignature} onChange={(event) => setAnalysisTimeSignature(event.target.value as TimeSignature | '')}>
-                                <option value="">No change</option>
-                                {TIME_SIGNATURES.map((signature) => (
-                                  <option key={signature} value={signature}>
-                                    {signature}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
-
-                          <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleApplyAudioAnalysis}>
-                            Apply Manual Values
-                          </button>
-
-                          <section className="space-y-3 rounded-xl border border-amber-950/20 bg-stone-950/45 p-3">
-                            <div className="space-y-1">
-                              <h5 className="text-sm font-medium text-zinc-200">Starter Template</h5>
-                              <p className="text-xs text-stone-500">Starter template only; this is not an AI transcription.</p>
-                            </div>
-                            <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                              Template
-                              <select className={INPUT_CLASS} value={selectedStarterTemplate} onChange={(event) => handleSetStarterTemplate(event.target.value as StarterTemplateName)}>
-                                {Object.keys(STARTER_TEMPLATES).map((templateName) => (
-                                  <option key={templateName} value={templateName}>
-                                    {templateName}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <div className="flex flex-wrap gap-2">
-                              <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleInsertStarterTemplate}>
-                                Insert Template
-                              </button>
-                              <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleAppendStarterTemplate}>
-                                Append Template
-                              </button>
-                            </div>
-                          </section>
-                        </div>
-                      ) : null}
-                    </section>
-
-                    <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                      Notes
-                      <textarea
-                        className={`${INPUT_CLASS} min-h-24 text-sm leading-6`}
-                        value={notes}
-                        onChange={(event) => setNotes(event.target.value)}
-                        placeholder="Arrangement notes, breaks, endings, or reminders for the band."
-                      />
-                    </label>
-
+                {!isQuickMode ? <section className={`${SUBPANEL_CLASS} no-print`}>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">Advanced Settings</h4>
+                      <p className="text-xs text-stone-400">Chart style and transposition tools.</p>
+                    </div>
+                    <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleToggleSection('advanced')}>
+                      {sectionOpen.advanced ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                  {sectionOpen.advanced ? <div className="mt-4 space-y-4">
                     <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <h4 className="text-sm font-medium text-zinc-200">Templates</h4>
-                          <p className="mt-1 text-xs text-zinc-400">Optional song-form starters.</p>
-                        </div>
-                        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => setTemplatesExpanded((current) => !current)}>
-                          {templatesExpanded ? 'Hide' : 'Show'}
-                        </button>
-                      </div>
-                      {templatesExpanded ? (
-                        <div className="flex flex-wrap gap-2">
-                          {Object.keys(TEMPLATE_PRESETS).map((name) => (
-                            <button key={name} type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleInsertTemplate(name)}>
-                              {name}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </section>
-
-                    <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <h4 className="text-sm font-medium text-zinc-200">Rare Settings</h4>
-                          <p className="mt-1 text-xs text-zinc-400">Chart style and transposition tools.</p>
+                          <h4 className="text-sm font-medium text-zinc-200">Advanced Settings</h4>
+                          <p className="mt-1 text-xs text-zinc-400">Choose how the chart converts and transpose when needed.</p>
                         </div>
                         <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleTransposeChart}>
                           Transpose
