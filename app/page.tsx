@@ -92,7 +92,6 @@ type AudioAnalysisSnapshot = {
   sections: AnalysisSection[];
   status: AudioAnalysisStatus;
   structureConfidence?: AnalysisConfidence;
-  tapTempoBpm?: number | null;
   timeSignature: TimeSignature | '';
 };
 
@@ -1603,8 +1602,6 @@ export default function Page() {
   const [analysisBpm, setAnalysisBpm] = useState('');
   const [analysisKey, setAnalysisKey] = useState<KeyName>(SAMPLE_CHART.key);
   const [analysisTimeSignature, setAnalysisTimeSignature] = useState<TimeSignature | ''>('');
-  const [tapTimes, setTapTimes] = useState<number[]>([]);
-  const [tapTempoBpm, setTapTempoBpm] = useState<number | null>(null);
   const [structureChartSections, setStructureChartSections] = useState<StructureChartSection[]>([]);
   const [structureChartMessage, setStructureChartMessage] = useState('');
 
@@ -1791,7 +1788,6 @@ export default function Page() {
       sections: analysisSections,
       status: analysisStatus,
       structureConfidence: analysisStructureConfidence,
-      tapTempoBpm,
       timeSignature: analysisTimeSignature,
     };
   }
@@ -1867,8 +1863,6 @@ export default function Page() {
     setAnalysisKey(snapshot.manualKey ?? snapshot.key ?? fallbackKey);
     setAnalysisTimeSignature(snapshot.timeSignature);
     setAnalysisStatus(snapshot.status);
-    setTapTimes([]);
-    setTapTempoBpm(snapshot.tapTempoBpm ?? null);
     setStructureChartMessage(snapshot.chartBuilderSections?.length ? 'Structure chart builder restored with this chart.' : '');
   }
 
@@ -2057,19 +2051,6 @@ export default function Page() {
     if (estimatedKey) {
       setSelectedKey(estimatedKey);
       setTransposeToKey(estimatedKey);
-    }
-  }
-
-  function handleApplyAudioAnalysis() {
-    setSelectedKey(analysisKey);
-    setTransposeToKey(analysisKey);
-
-    if (analysisBpm.trim()) {
-      setTempo(analysisBpm.trim());
-    }
-
-    if (analysisTimeSignature) {
-      setTimeSignature(analysisTimeSignature);
     }
   }
 
@@ -2353,25 +2334,6 @@ export default function Page() {
     setSmartPasteMessage('Structure reset to the detected analysis.');
   }
 
-  function handleTapTempo() {
-    const now = performance.now();
-    const recentTaps = [...tapTimes.filter((time) => now - time < 5000), now].slice(-8);
-    setTapTimes(recentTaps);
-
-    if (recentTaps.length < 4) {
-      return;
-    }
-
-    const intervals = recentTaps.slice(1).map((time, index) => time - recentTaps[index]);
-    const averageInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length;
-    const nextBpm = Math.round(60000 / averageInterval);
-
-    if (Number.isFinite(nextBpm) && nextBpm > 30 && nextBpm < 260) {
-      setTapTempoBpm(nextBpm);
-      setAnalysisBpm(String(nextBpm));
-    }
-  }
-
   function handleSetAnalysisTimeSignature(signature: TimeSignature | '') {
     setAnalysisTimeSignature(signature);
 
@@ -2384,12 +2346,6 @@ export default function Page() {
         }))
       );
       setEstimatedBars(estimateBarsFromDuration(analysisDurationSeconds, estimatedBpm, effectiveSignature));
-    }
-  }
-
-  function handleApplyTapTempo() {
-    if (tapTempoBpm) {
-      setTempo(String(tapTempoBpm));
     }
   }
 
@@ -3378,19 +3334,6 @@ export default function Page() {
                           </button>
                           <span className="text-sm text-stone-300">{analysisStatus}</span>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-950/20 bg-stone-950/35 p-3">
-                          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleTapTempo}>
-                            Tap Tempo
-                          </button>
-                          <span className="text-sm text-stone-300">
-                            {tapTempoBpm ? `Tap Tempo: ${tapTempoBpm} BPM` : `${tapTimes.length} tap${tapTimes.length === 1 ? '' : 's'}`}
-                          </span>
-                          {tapTempoBpm ? (
-                            <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleApplyTapTempo}>
-                              Apply Tap Tempo
-                            </button>
-                          ) : null}
-                        </div>
                         {analysisStatus === 'Analysis failed' ? (
                           <p className="text-sm text-amber-200">Could not estimate BPM. Enter manually.</p>
                         ) : null}
@@ -3614,37 +3557,6 @@ export default function Page() {
                         ) : analysisFileName ? (
                           <p className="truncate text-xs text-stone-400">File: {analysisFileName}</p>
                         ) : null}
-                        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                            Manual BPM
-                            <input className={INPUT_CLASS} inputMode="numeric" placeholder="120" value={analysisBpm} onChange={(event) => setAnalysisBpm(event.target.value)} />
-                          </label>
-                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                            Likely Key
-                            <select className={INPUT_CLASS} value={analysisKey} onChange={(event) => setAnalysisKey(event.target.value as KeyName)}>
-                              {MAJOR_KEYS.map((key) => (
-                                <option key={key} value={key}>
-                                  {key}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
-                            Time Signature
-                            <select className={INPUT_CLASS} value={analysisTimeSignature} onChange={(event) => handleSetAnalysisTimeSignature(event.target.value as TimeSignature | '')}>
-                              <option value="">No change</option>
-                              {TIME_SIGNATURES.map((signature) => (
-                                <option key={signature} value={signature}>
-                                  {signature}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-
-                        <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleApplyAudioAnalysis}>
-                          Apply Manual Values
-                        </button>
                       </div>
                     ) : null}
                   </section>
