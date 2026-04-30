@@ -1815,7 +1815,25 @@ export default function Page() {
         (section) =>
           section.bars > 0 ||
           Boolean(section.cells?.some((cell) => cell.trim())) ||
-          Boolean(section.rows?.some((row) => row.some((cell) => cell.trim())))
+            Boolean(section.rows?.some((row) => row.some((cell) => cell.trim())))
+        );
+      }
+
+    function hasAudioAnalyzeData(snapshot: AudioAnalysisSnapshot | null) {
+      if (!snapshot) {
+        return false;
+      }
+
+      return Boolean(
+        snapshot.fileName?.trim() ||
+          snapshot.bpm ||
+          snapshot.key ||
+          snapshot.manualBpm?.trim() ||
+          snapshot.manualKey ||
+          snapshot.durationSeconds ||
+          snapshot.estimatedBars ||
+          snapshot.timeSignature ||
+          snapshot.status !== 'Waiting for file'
       );
     }
 
@@ -2592,17 +2610,22 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
 
     try {
       const analysisSnapshot = currentAudioAnalysisSnapshot();
+      const includedAudioAnalyze = hasAudioAnalyzeData(analysisSnapshot);
       const includedStructure = Boolean(analysisSnapshot?.sections.length || analysisSnapshot?.detectedSections?.length);
       const includedBuilder = hasBuilderData(analysisSnapshot);
       const savedChart = await saveChartRecord();
-      const statusParts = ['Saved chart ✓'];
+      const summaryParts = ['Chart'];
+
+      if (includedAudioAnalyze) {
+        summaryParts.push('Audio Analyze');
+      }
 
       if (includedStructure) {
-        statusParts.push('Saved structure ✓');
+        summaryParts.push('Structure');
       }
 
       if (includedBuilder) {
-        statusParts.push('Saved builder data ✓');
+        summaryParts.push('Builder');
       }
 
       console.info('audio_analysis_data saved');
@@ -2615,27 +2638,29 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
       setLastSavedSnapshot(JSON.stringify(toChartSnapshot(savedChart)));
       setSaveToastLines([
         'Saved chart ✓',
+        ...(includedAudioAnalyze ? ['Saved audio analyze ✓'] : []),
         ...(includedStructure ? ['Saved structure ✓'] : []),
         ...(includedBuilder ? ['Saved builder data ✓'] : []),
       ]);
       setShowSaveToast(true);
       setSaveLabel('Saved ✓');
-      setSaveStatusMessage(
-        includedBuilder ? 'Saved ✓ Chart + Structure + Builder' : statusParts.join(' • ')
-      );
+      setSaveStatusMessage(`Saved: ${summaryParts.join(' + ')}`);
       window.setTimeout(() => {
         setSaveLabel('Save Chart');
+      }, 2000);
+      window.setTimeout(() => {
         setSaveStatusMessage('');
         setShowSaveToast(false);
-      }, 2400);
+      }, 3000);
     } catch (error) {
       console.error('Save Chart failed', error);
-      setSaveLabel('Save failed');
+      setSaveLabel('Save Failed');
       setSaveStatusMessage('Save failed — check console');
       window.setTimeout(() => {
         setSaveLabel('Save Chart');
         setSaveStatusMessage('');
-      }, 2400);
+        setShowSaveToast(false);
+      }, 3000);
     } finally {
       setIsSaving(false);
     }
