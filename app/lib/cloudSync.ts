@@ -2,10 +2,12 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 export type SavedChart = {
   audioAnalysis?: unknown;
+  audioAnalysisData?: unknown;
   audioFilename?: string;
   audioPath?: string;
   audioUrl?: string;
   artist?: string;
+  builderData?: unknown;
   capo?: string;
   chartMode?: string;
   chordChart?: string;
@@ -15,6 +17,7 @@ export type SavedChart = {
   nashvilleChart?: string;
   notes?: string;
   savedAt?: string;
+  structureData?: unknown;
   tempo?: string;
   timeSignature?: string;
   title?: string;
@@ -35,12 +38,14 @@ export type CloudStatus = {
 };
 
 type ChartRow = {
+  audio_analysis_data: unknown | null;
   id: string;
   audio_filename: string | null;
   audio_path: string | null;
   audio_url: string | null;
   title: string | null;
   artist: string | null;
+  builder_data: unknown | null;
   key: string | null;
   time_signature: string | null;
   tempo: string | null;
@@ -50,6 +55,7 @@ type ChartRow = {
   chord_chart: string | null;
   nashville_chart: string | null;
   chart_mode: string | null;
+  structure_data: unknown | null;
   updated_at: string | null;
   is_favorite?: boolean | null;
 };
@@ -137,14 +143,165 @@ export function getInitialCloudStatus(): CloudStatus {
     : { connected: false, label: 'Local Only', message: 'Cloud Sync: Local Only. Add Supabase env vars to enable sync.' };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readRecordArray(value: unknown, keys: string[]) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item) => isRecord(item) && keys.every((key) => key in item));
+}
+
+function buildAudioAnalysisPayload(chart: SavedChart) {
+  if (chart.audioAnalysisData !== undefined) {
+    return chart.audioAnalysisData;
+  }
+
+  if (!isRecord(chart.audioAnalysis)) {
+    return null;
+  }
+
+  const snapshot = chart.audioAnalysis;
+  const detectedSections = readRecordArray(snapshot.detectedSections, ['label', 'startSeconds', 'endSeconds']);
+  const editedSections = readRecordArray(snapshot.sections, ['label', 'startSeconds', 'endSeconds']);
+
+  return {
+    fileName: typeof snapshot.fileName === 'string' ? snapshot.fileName : '',
+    bpm: typeof snapshot.bpm === 'number' ? snapshot.bpm : null,
+    likelyKey: typeof snapshot.key === 'string' ? snapshot.key : null,
+    selectedManualKey: typeof snapshot.manualKey === 'string' ? snapshot.manualKey : null,
+    manualKey: typeof snapshot.manualKey === 'string' ? snapshot.manualKey : null,
+    durationSeconds: typeof snapshot.durationSeconds === 'number' ? snapshot.durationSeconds : 0,
+    estimatedBars: typeof snapshot.estimatedBars === 'number' ? snapshot.estimatedBars : null,
+    status: typeof snapshot.status === 'string' ? snapshot.status : '',
+    timeSignature: typeof snapshot.timeSignature === 'string' ? snapshot.timeSignature : '',
+    manualBpm: typeof snapshot.manualBpm === 'string' ? snapshot.manualBpm : '',
+    structureConfidence: snapshot.structureConfidence ?? null,
+    confidence: {
+      structure: snapshot.structureConfidence ?? null,
+    },
+    analysisResultMetadata: {
+      detectedSectionCount: detectedSections.length,
+      editedSectionCount: editedSections.length,
+      hasBuilderSections: Array.isArray(snapshot.chartBuilderSections) && snapshot.chartBuilderSections.length > 0,
+    },
+  };
+}
+
+function buildStructurePayload(chart: SavedChart) {
+  if (chart.structureData !== undefined) {
+    return chart.structureData;
+  }
+
+  if (!isRecord(chart.audioAnalysis)) {
+    return null;
+  }
+
+  const snapshot = chart.audioAnalysis;
+  const detectedSections = readRecordArray(snapshot.detectedSections, ['label', 'startSeconds', 'endSeconds']);
+  const editedSections = readRecordArray(snapshot.sections, ['label', 'startSeconds', 'endSeconds']);
+  const sectionLabels = editedSections.map((section) => String(section.label ?? 'Section'));
+
+  return {
+    detectedStructure: detectedSections,
+    detectedSections,
+    editedStructure: editedSections,
+    editedSections,
+    sections: editedSections,
+    sectionLabels,
+    sectionOrder: sectionLabels,
+    estimatedBarsPerSection: editedSections.map((section) => section.bars ?? null),
+    timestamps: editedSections.map((section) => ({
+      label: section.label ?? 'Section',
+      startSeconds: section.startSeconds ?? 0,
+      endSeconds: section.endSeconds ?? 0,
+    })),
+  };
+}
+
+function buildBuilderPayload(chart: SavedChart) {
+  if (chart.builderData !== undefined) {
+    return chart.builderData;
+  }
+
+  if (!isRecord(chart.audioAnalysis)) {
+    return null;
+  }
+
+  const snapshot = chart.audioAnalysis;
+  const sections = readRecordArray(snapshot.chartBuilderSections, ['label', 'startSeconds', 'endSeconds']);
+
+  return {
+    chartBuilderSections: sections,
+    sectionGrids: sections,
+    rowValues: sections.map((section) => section.rows ?? []),
+    customRowLengths: sections.map((section) => section.bars ?? null),
+    copiedAppliedSectionData: sections.map((section) => ({
+      id: section.id ?? '',
+      label: section.label ?? 'Section',
+      bars: section.bars ?? null,
+      cells: section.cells ?? [],
+      rows: section.rows ?? [],
+    })),
+  };
+}
+
+function buildAudioAnalysisSnapshotFromData(
+  audioAnalysisData: unknown,
+  structureData: unknown,
+  builderData: unknown
+) {
+  if (!isRecord(audioAnalysisData) && !isRecord(structureData) && !isRecord(builderData)) {
+    return null;
+  }
+
+  const analysis = isRecord(audioAnalysisData) ? audioAnalysisData : {};
+  const structure = isRecord(structureData) ? structureData : {};
+  const builder = isRecord(builderData) ? builderData : {};
+  const detectedSections = readRecordArray(structure.detectedSections ?? structure.detectedStructure, ['label', 'startSeconds', 'endSeconds']);
+  const editedSections = readRecordArray(structure.editedSections ?? structure.editedStructure ?? structure.sections, ['label', 'startSeconds', 'endSeconds']);
+  const chartBuilderSections = readRecordArray(builder.chartBuilderSections ?? builder.sectionGrids, ['label', 'startSeconds', 'endSeconds']);
+
+  return {
+    bpm: typeof analysis.bpm === 'number' ? analysis.bpm : null,
+    chartBuilderSections,
+    detectedSections,
+    durationSeconds: typeof analysis.durationSeconds === 'number' ? analysis.durationSeconds : 0,
+    estimatedBars: typeof analysis.estimatedBars === 'number' ? analysis.estimatedBars : null,
+    fileName: typeof analysis.fileName === 'string' ? analysis.fileName : '',
+    key: typeof analysis.likelyKey === 'string' ? analysis.likelyKey : typeof analysis.key === 'string' ? analysis.key : null,
+    manualBpm: typeof analysis.manualBpm === 'string' ? analysis.manualBpm : '',
+    manualKey:
+      typeof analysis.selectedManualKey === 'string'
+        ? analysis.selectedManualKey
+        : typeof analysis.manualKey === 'string'
+          ? analysis.manualKey
+          : undefined,
+    sections: editedSections,
+    status: typeof analysis.status === 'string' ? analysis.status : 'Waiting for file',
+    structureConfidence:
+      typeof analysis.structureConfidence === 'string'
+        ? analysis.structureConfidence
+        : isRecord(analysis.confidence) && typeof analysis.confidence.structure === 'string'
+          ? analysis.confidence.structure
+          : undefined,
+    timeSignature: typeof analysis.timeSignature === 'string' ? analysis.timeSignature : '',
+  };
+}
+
 function chartToRow(chart: SavedChart, isFavorite = false): ChartInsertRow {
   return {
     ...(isUuid(chart.id) ? { id: chart.id } : {}),
+    audio_analysis_data: buildAudioAnalysisPayload(chart),
     audio_filename: chart.audioFilename ?? '',
     audio_path: chart.audioPath ?? '',
     audio_url: chart.audioUrl ?? '',
     title: chart.title ?? '',
     artist: chart.artist ?? '',
+    builder_data: buildBuilderPayload(chart),
     key: chart.key ?? '',
     time_signature: chart.timeSignature ?? '',
     tempo: chart.tempo ?? '',
@@ -154,19 +311,29 @@ function chartToRow(chart: SavedChart, isFavorite = false): ChartInsertRow {
     chord_chart: chart.chordChart ?? '',
     nashville_chart: chart.nashvilleChart ?? '',
     chart_mode: chart.chartMode ?? '',
+    structure_data: buildStructurePayload(chart),
     updated_at: chart.savedAt ?? new Date().toISOString(),
     is_favorite: isFavorite,
   };
 }
 
 function rowToChart(row: ChartRow): SavedChart {
+  const audioAnalysis = buildAudioAnalysisSnapshotFromData(
+    row.audio_analysis_data,
+    row.structure_data,
+    row.builder_data
+  );
+
   return {
+    audioAnalysis,
+    audioAnalysisData: row.audio_analysis_data,
     audioFilename: row.audio_filename ?? '',
     audioPath: row.audio_path ?? '',
     audioUrl: row.audio_url ?? '',
     id: row.id,
     title: row.title ?? '',
     artist: row.artist ?? '',
+    builderData: row.builder_data,
     key: row.key ?? '',
     timeSignature: row.time_signature ?? '',
     tempo: row.tempo ?? '',
@@ -177,6 +344,7 @@ function rowToChart(row: ChartRow): SavedChart {
     nashvilleChart: row.nashville_chart ?? '',
     chartMode: row.chart_mode ?? '',
     savedAt: row.updated_at ?? '',
+    structureData: row.structure_data,
   };
 }
 

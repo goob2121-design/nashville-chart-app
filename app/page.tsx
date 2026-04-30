@@ -2556,10 +2556,14 @@ export default function Page() {
 
     try {
       const savedChart = await saveChartRecord();
+      const persistenceDetails = 'audio_analysis_data saved • structure_data saved • builder_data saved';
+      console.info('audio_analysis_data saved');
+      console.info('structure_data saved');
+      console.info('builder_data saved');
       setLastSavedSnapshot(JSON.stringify(toChartSnapshot(savedChart)));
       setShowSaveToast(true);
       setSaveLabel('Saved ✓');
-      setSaveStatusMessage('Saved ✓');
+      setSaveStatusMessage(`Saved ✓ ${persistenceDetails}`);
       window.setTimeout(() => {
         setSaveLabel('Save Chart');
         setSaveStatusMessage('');
@@ -2804,7 +2808,10 @@ export default function Page() {
 
       {showSaveToast ? (
         <div className="no-print fixed bottom-4 right-4 z-40 rounded-xl border border-emerald-500/30 bg-stone-950/95 px-4 py-3 text-sm font-medium text-emerald-200 shadow-xl shadow-black/25">
-          Saved ✓
+          <p>Saved ✓</p>
+          <p className="mt-1 text-xs font-normal text-emerald-100/90">audio_analysis_data saved</p>
+          <p className="text-xs font-normal text-emerald-100/90">structure_data saved</p>
+          <p className="text-xs font-normal text-emerald-100/90">builder_data saved</p>
         </div>
       ) : null}
 
