@@ -1104,15 +1104,27 @@ function flattenStructureRows(rows: string[][]) {
   return rows.flat();
 }
 
+function getStructureSectionBarCount(
+  section: Pick<AnalysisSection, 'bars' | 'durationSeconds'>,
+  existing?: Pick<StructureChartSection, 'bars' | 'cells' | 'rows'>
+) {
+  const rowBarCount = existing?.rows?.flat().length ?? 0;
+  const cellBarCount = existing?.cells?.length ?? 0;
+  const existingBarCount = existing?.bars ?? 0;
+  const derivedBarCount = (section.bars ?? Math.round(section.durationSeconds / 4)) || 4;
+
+  return Math.max(1, Math.min(64, rowBarCount || cellBarCount || existingBarCount || derivedBarCount));
+}
+
 function buildStructureChartSections(sections: AnalysisSection[], existingSections: StructureChartSection[] = []) {
   return sections.map((section, index): StructureChartSection => {
-    const bars = Math.max(1, Math.min(64, (section.bars ?? Math.round(section.durationSeconds / 4)) || 4));
     const id = structureSectionId(section, index);
     const existing =
       existingSections.find((builderSection) => structureTimingMatches(builderSection, section)) ??
       existingSections.find((builderSection) => builderSection.id === id) ??
       existingSections[index] ??
       existingSections.find((builderSection) => builderSection.label === section.label);
+    const bars = getStructureSectionBarCount(section, existing);
 
     return {
       bars,
@@ -1840,7 +1852,7 @@ export default function Page() {
     setAudioUrl(fields.audioUrl ?? '');
   }
 
-  function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fallbackKey = selectedKey) {
+function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fallbackKey = selectedKey) {
     if (!snapshot) {
       handleClearAudioAnalysis();
       return;
@@ -1857,9 +1869,13 @@ export default function Page() {
     setEstimatedBars(snapshot.estimatedBars);
     const restoredSections = normalizeAnalysisSections(snapshot.sections, snapshot.bpm, snapshot.timeSignature || timeSignature);
     const restoredDetectedSections = normalizeAnalysisSections(snapshot.detectedSections ?? snapshot.sections, snapshot.bpm, snapshot.timeSignature || timeSignature);
+    const restoredBuilderSections =
+      snapshot.chartBuilderSections?.length
+        ? buildStructureChartSections(restoredSections, snapshot.chartBuilderSections)
+        : buildStructureChartSections(restoredSections);
     setAnalysisSections(restoredSections);
     setDetectedAnalysisSections(restoredDetectedSections);
-    setStructureChartSections(buildStructureChartSections(restoredSections, snapshot.chartBuilderSections ?? []));
+    setStructureChartSections(restoredBuilderSections);
     setAnalysisBpm(snapshot.manualBpm ?? (snapshot.bpm ? String(snapshot.bpm) : ''));
     setAnalysisKey(snapshot.manualKey ?? snapshot.key ?? fallbackKey);
     setAnalysisTimeSignature(snapshot.timeSignature);
