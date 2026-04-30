@@ -1579,6 +1579,9 @@ export default function Page() {
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
   const [saveToastLines, setSaveToastLines] = useState<string[]>([]);
+  const [structureSaveLabel, setStructureSaveLabel] = useState('Save Structure');
+  const [builderSaveLabel, setBuilderSaveLabel] = useState('Save Builder Progress');
+  const [rightPanelSaveStatus, setRightPanelSaveStatus] = useState('');
   const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   const [, setLastSavedSnapshot] = useState(() => JSON.stringify(SAMPLE_CHART));
   const [hasMounted, setHasMounted] = useState(false);
@@ -2402,8 +2405,53 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
   }
 
   async function handleSaveStructure() {
-    await saveChartRecord();
-    setSmartPasteMessage('Structure saved with this chart.');
+    setStructureSaveLabel('Saving...');
+    setRightPanelSaveStatus('');
+
+    try {
+      await saveChartRecord();
+      setSmartPasteMessage('Structure saved with this chart.');
+      setStructureSaveLabel('Structure Saved ✓');
+      setRightPanelSaveStatus('Saved to cloud ✓');
+      window.setTimeout(() => {
+        setStructureSaveLabel('Save Structure');
+      }, 2000);
+      window.setTimeout(() => {
+        setRightPanelSaveStatus('');
+      }, 3000);
+    } catch (error) {
+      console.error('Save Structure failed', error);
+      setStructureSaveLabel('Save Failed');
+      setRightPanelSaveStatus('');
+      window.setTimeout(() => {
+        setStructureSaveLabel('Save Structure');
+      }, 3000);
+    }
+  }
+
+  async function handleSaveBuilderProgress() {
+    setBuilderSaveLabel('Saving...');
+    setRightPanelSaveStatus('');
+
+    try {
+      await saveChartRecord();
+      setStructureChartMessage('Builder progress saved with this chart.');
+      setBuilderSaveLabel('Builder Saved ✓');
+      setRightPanelSaveStatus('Saved to cloud ✓');
+      window.setTimeout(() => {
+        setBuilderSaveLabel('Save Builder Progress');
+      }, 2000);
+      window.setTimeout(() => {
+        setRightPanelSaveStatus('');
+      }, 3000);
+    } catch (error) {
+      console.error('Save Builder Progress failed', error);
+      setBuilderSaveLabel('Save Failed');
+      setRightPanelSaveStatus('');
+      window.setTimeout(() => {
+        setBuilderSaveLabel('Save Builder Progress');
+      }, 3000);
+    }
   }
 
   function handleResetAnalysisSections() {
@@ -3546,7 +3594,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                                         Add Section
                                       </button>
                                       <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleSaveStructure()}>
-                                        Save Structure
+                                        {structureSaveLabel}
                                       </button>
                                       {detectedAnalysisSections.length ? (
                                         <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleResetAnalysisSections}>
@@ -3554,6 +3602,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                                         </button>
                                       ) : null}
                                     </div>
+                                    {rightPanelSaveStatus ? <p className="text-xs text-emerald-300">{rightPanelSaveStatus}</p> : null}
                                   </>
                                 ) : (
                                   <p className="text-xs text-stone-400">
@@ -3654,10 +3703,11 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                                       <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => handleApplyAllStructureSections(false)}>
                                         Append All Sections to Chart
                                       </button>
-                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleSaveStructure()}>
-                                        Save Builder Progress
+                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleSaveBuilderProgress()}>
+                                        {builderSaveLabel}
                                       </button>
                                     </div>
+                                    {rightPanelSaveStatus ? <p className="text-xs text-emerald-300">{rightPanelSaveStatus}</p> : null}
                                   </>
                                 ) : (
                                   <p className="text-xs text-stone-400">
