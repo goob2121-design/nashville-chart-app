@@ -1578,6 +1578,7 @@ export default function Page() {
   const [saveStatusMessage, setSaveStatusMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [saveToastLines, setSaveToastLines] = useState<string[]>([]);
   const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   const [, setLastSavedSnapshot] = useState(() => JSON.stringify(SAMPLE_CHART));
   const [hasMounted, setHasMounted] = useState(false);
@@ -1802,11 +1803,24 @@ export default function Page() {
       status: analysisStatus,
       structureConfidence: analysisStructureConfidence,
       timeSignature: analysisTimeSignature,
-    };
-  }
+      };
+    }
 
-  function currentSnapshot() {
-    return buildSnapshot({
+    function hasBuilderData(snapshot: AudioAnalysisSnapshot | null) {
+      if (!snapshot?.chartBuilderSections?.length) {
+        return false;
+      }
+
+      return snapshot.chartBuilderSections.some(
+        (section) =>
+          section.bars > 0 ||
+          Boolean(section.cells?.some((cell) => cell.trim())) ||
+          Boolean(section.rows?.some((row) => row.some((cell) => cell.trim())))
+      );
+    }
+
+    function currentSnapshot() {
+      return buildSnapshot({
       audioAnalysis: currentAudioAnalysisSnapshot(),
       audioFilename,
       audioPath,
@@ -2530,13 +2544,18 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     setSelectedSavedChartId(id);
     setCurrentChartId(id);
 
-    if (cloudStatus.connected) {
-      const result = await upsertCloudChart(savedChart);
+      if (cloudStatus.connected) {
+        const result = await upsertCloudChart(savedChart);
 
-      if (!result.ok) {
-        setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
-        setCloudMessage('Saved locally. Cloud sync failed, so localStorage is still your backup.');
-        return savedChart;
+        if (!result.ok) {
+          console.error('Supabase chart save failed', {
+            chartId: savedChart.id,
+            error: result.error,
+            payload: savedChart,
+          });
+          setCloudStatus({ connected: false, label: 'Local Only', message: `Cloud Sync: Local Only. ${result.error}` });
+          setCloudMessage('Saved locally. Cloud sync failed, so localStorage is still your backup.');
+          return savedChart;
       } else if (result.chart) {
         const cloudSavedChart = {
           ...normalizeSavedChart(result.chart),
@@ -2567,28 +2586,56 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
   async function handleSaveChart() {
     setIsSaving(true);
     setSaveLabel('Saving...');
-    setSaveStatusMessage('');
+    setSaveStatusMessage('Saving chart...');
     setShowSaveToast(false);
+    setSaveToastLines([]);
 
     try {
+      const analysisSnapshot = currentAudioAnalysisSnapshot();
+      const includedStructure = Boolean(analysisSnapshot?.sections.length || analysisSnapshot?.detectedSections?.length);
+      const includedBuilder = hasBuilderData(analysisSnapshot);
       const savedChart = await saveChartRecord();
-      const persistenceDetails = 'audio_analysis_data saved • structure_data saved • builder_data saved';
+      const statusParts = ['Saved chart ✓'];
+
+      if (includedStructure) {
+        statusParts.push('Saved structure ✓');
+      }
+
+      if (includedBuilder) {
+        statusParts.push('Saved builder data ✓');
+      }
+
       console.info('audio_analysis_data saved');
-      console.info('structure_data saved');
-      console.info('builder_data saved');
+      if (includedStructure) {
+        console.info('structure_data saved');
+      }
+      if (includedBuilder) {
+        console.info('builder_data saved');
+      }
       setLastSavedSnapshot(JSON.stringify(toChartSnapshot(savedChart)));
+      setSaveToastLines([
+        'Saved chart ✓',
+        ...(includedStructure ? ['Saved structure ✓'] : []),
+        ...(includedBuilder ? ['Saved builder data ✓'] : []),
+      ]);
       setShowSaveToast(true);
       setSaveLabel('Saved ✓');
-      setSaveStatusMessage(`Saved ✓ ${persistenceDetails}`);
+      setSaveStatusMessage(
+        includedBuilder ? 'Saved ✓ Chart + Structure + Builder' : statusParts.join(' • ')
+      );
       window.setTimeout(() => {
         setSaveLabel('Save Chart');
         setSaveStatusMessage('');
         setShowSaveToast(false);
-      }, 1800);
-    } catch {
+      }, 2400);
+    } catch (error) {
+      console.error('Save Chart failed', error);
       setSaveLabel('Save failed');
-      setSaveStatusMessage('Save failed. Try again.');
-      window.setTimeout(() => setSaveLabel('Save Chart'), 2200);
+      setSaveStatusMessage('Save failed — check console');
+      window.setTimeout(() => {
+        setSaveLabel('Save Chart');
+        setSaveStatusMessage('');
+      }, 2400);
     } finally {
       setIsSaving(false);
     }
@@ -2824,10 +2871,11 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
 
       {showSaveToast ? (
         <div className="no-print fixed bottom-4 right-4 z-40 rounded-xl border border-emerald-500/30 bg-stone-950/95 px-4 py-3 text-sm font-medium text-emerald-200 shadow-xl shadow-black/25">
-          <p>Saved ✓</p>
-          <p className="mt-1 text-xs font-normal text-emerald-100/90">audio_analysis_data saved</p>
-          <p className="text-xs font-normal text-emerald-100/90">structure_data saved</p>
-          <p className="text-xs font-normal text-emerald-100/90">builder_data saved</p>
+          {saveToastLines.map((line, index) => (
+            <p key={`${line}-${index}`} className={index === 0 ? '' : 'mt-1 text-xs font-normal text-emerald-100/90'}>
+              {line}
+            </p>
+          ))}
         </div>
       ) : null}
 
