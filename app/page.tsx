@@ -55,6 +55,7 @@ type UiMode = 'quick' | 'pro';
 type ActiveTextarea = 'input' | 'output';
 type AudioAnalysisStatus = 'Waiting for file' | 'Analyzing...' | 'Analysis complete' | 'Analysis failed';
 type AnalysisConfidence = 'High' | 'Medium' | 'Low';
+type IntroOutroSensitivity = 'Conservative' | 'Normal' | 'Sensitive';
 type SectionId = 'songSetup' | 'chartBuilder' | 'output' | 'advanced' | 'library';
 type SectionOpenState = Record<SectionId, boolean>;
 
@@ -89,6 +90,7 @@ type AudioAnalysisSnapshot = {
   key: KeyName | null;
   manualBpm?: string;
   manualKey?: KeyName;
+  sensitivity?: IntroOutroSensitivity;
   sections: AnalysisSection[];
   status: AudioAnalysisStatus;
   structureConfidence?: AnalysisConfidence;
@@ -130,6 +132,7 @@ const UI_MODE_STORAGE_KEY = 'nashville-chart-builder:ui-mode';
 const AUDIO_ANALYZE_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:audio-analyze-expanded';
 const AUDIO_STRUCTURE_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:audio-structure-expanded';
 const STRUCTURE_CHART_BUILDER_EXPANDED_STORAGE_KEY = 'nashville-chart-builder:structure-chart-builder-expanded';
+const INTRO_OUTRO_SENSITIVITY_STORAGE_KEY = 'nashville-chart-builder:intro-outro-sensitivity';
 
 const INPUT_CLASS =
   'w-full rounded-xl border border-amber-950/40 bg-stone-950/70 px-3 py-2.5 text-base text-stone-100 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20';
@@ -936,21 +939,79 @@ function sectionSimilarity(first: { durationSeconds: number; energy: number; sha
   return durationRatio * 0.35 + energyRatio * 0.25 + shapeScore * 0.4;
 }
 
-function labelAnalysisSections(rawSections: Array<{ startSeconds: number; durationSeconds: number; endSeconds: number; energy: number; shape: number[] }>) {
+function introOutroSettings(sensitivity: IntroOutroSensitivity, bpm: number | null, signature: TimeSignature) {
+  const secondsPerBar = bpm ? (60 / bpm) * beatsPerBar(signature) : 3.5 * beatsPerBar(signature);
+  const fourBars = Math.max(8, secondsPerBar * 4);
+
+  if (sensitivity === 'Conservative') {
+    return {
+      fadeDropRatio: 0.68,
+      minBoundarySeconds: Math.max(10, fourBars),
+      preserveSeconds: Math.max(12, fourBars),
+      shapeDifference: 0.32,
+      shortBoundarySeconds: Math.max(14, secondsPerBar * 6),
+    };
+  }
+
+  if (sensitivity === 'Sensitive') {
+    return {
+      fadeDropRatio: 0.86,
+      minBoundarySeconds: Math.max(8, fourBars),
+      preserveSeconds: Math.max(8, fourBars),
+      shapeDifference: 0.14,
+      shortBoundarySeconds: Math.max(22, secondsPerBar * 10),
+    };
+  }
+
+  return {
+    fadeDropRatio: 0.78,
+    minBoundarySeconds: Math.max(9, fourBars),
+    preserveSeconds: Math.max(10, fourBars),
+    shapeDifference: 0.22,
+    shortBoundarySeconds: Math.max(18, secondsPerBar * 8),
+  };
+}
+
+function sectionShapeDifference(first: { energy: number; shape: number[] }, second: { energy: number; shape: number[] }) {
+  const shapeDistance = first.shape.reduce((sum, value, index) => sum + Math.abs(value - (second.shape[index] ?? value)), 0) / Math.max(first.shape.length, 1);
+  const energyRatio = Math.min(first.energy, second.energy) / Math.max(first.energy, second.energy, 0.0001);
+  return shapeDistance * 0.7 + (1 - energyRatio) * 0.3;
+}
+
+function isFadeOutSection(section: { shape: number[] }, settings: ReturnType<typeof introOutroSettings>) {
+  const firstHalf = section.shape.slice(0, 2).reduce((sum, value) => sum + value, 0) / 2;
+  const secondHalf = section.shape.slice(2).reduce((sum, value) => sum + value, 0) / 2;
+  return firstHalf > 0 && secondHalf / firstHalf <= settings.fadeDropRatio;
+}
+
+function labelAnalysisSections(
+  rawSections: Array<{ startSeconds: number; durationSeconds: number; endSeconds: number; energy: number; shape: number[] }>,
+  sensitivity: IntroOutroSensitivity,
+  bpm: number | null,
+  signature: TimeSignature
+) {
   const averageEnergy = rawSections.reduce((sum, section) => sum + section.energy, 0) / Math.max(rawSections.length, 1);
   const repeatedGroups: Array<{ base: (typeof rawSections)[number]; label: string }> = [];
   const freshLabels = ['Verse', 'Chorus', 'Bridge', 'Section A', 'Section B', 'Section C'];
+  const settings = introOutroSettings(sensitivity, bpm, signature);
 
   return rawSections.map((section, index) => {
     let label = freshLabels[Math.min(index, freshLabels.length - 1)] ?? 'Section A';
     let confidence: AnalysisSection['confidence'] = 'Low';
     const matchingGroup = repeatedGroups.find((group) => sectionSimilarity(section, group.base) >= 0.76);
+    const nextSection = rawSections[index + 1];
+    const previousSection = rawSections[index - 1];
+    const isShortBoundary = section.durationSeconds <= settings.shortBoundarySeconds;
+    const firstIsDifferent = nextSection ? sectionShapeDifference(section, nextSection) >= settings.shapeDifference : false;
+    const lastIsDifferent = previousSection ? sectionShapeDifference(section, previousSection) >= settings.shapeDifference : false;
+    const isLowerEnding = previousSection ? section.energy < previousSection.energy * 0.88 || section.energy < averageEnergy * 0.86 : section.energy < averageEnergy * 0.86;
+    const isFadeEnding = isFadeOutSection(section, settings);
 
-    if (index === 0 && section.durationSeconds <= 24) {
+    if (index === 0 && (isShortBoundary || firstIsDifferent)) {
       label = 'Intro';
-      confidence = 'Medium';
-    } else if (index === rawSections.length - 1 && (section.durationSeconds <= 24 || section.energy < averageEnergy * 0.82)) {
-      label = 'Outro';
+      confidence = firstIsDifferent ? 'High' : 'Medium';
+    } else if (index === rawSections.length - 1 && (isShortBoundary || isLowerEnding || lastIsDifferent || isFadeEnding)) {
+      label = isFadeEnding || isLowerEnding || lastIsDifferent ? 'Outro' : 'Tag';
       confidence = 'Medium';
     } else if (section.energy > averageEnergy * 1.18 && index > 1) {
       label = 'Solo / Break';
@@ -969,7 +1030,7 @@ function labelAnalysisSections(rawSections: Array<{ startSeconds: number; durati
   });
 }
 
-function detectLikelySections(buffer: AudioBuffer, bpm: number | null, signature: TimeSignature): AnalysisSection[] {
+function detectLikelySections(buffer: AudioBuffer, bpm: number | null, signature: TimeSignature, sensitivity: IntroOutroSensitivity): AnalysisSection[] {
   const sampleRate = buffer.sampleRate;
   const maxSamples = Math.min(buffer.length, sampleRate * 360);
   const windowSeconds = 3;
@@ -1006,26 +1067,87 @@ function detectLikelySections(buffer: AudioBuffer, bpm: number | null, signature
   const changes = smoothed.slice(1).map((window, index) => Math.abs(window.rms - smoothed[index].rms));
   const sortedChanges = [...changes].sort((first, second) => first - second);
   const threshold = sortedChanges[Math.floor(sortedChanges.length * 0.75)] ?? 0;
-  const minSectionSeconds = 15;
+  const boundarySettings = introOutroSettings(sensitivity, bpm, signature);
+  const minSectionSeconds = sensitivity === 'Sensitive' ? 12 : sensitivity === 'Conservative' ? 18 : 15;
+  const boundarySeconds = boundarySettings.preserveSeconds;
   const starts = [0];
 
   for (let index = 1; index < smoothed.length; index += 1) {
     const change = Math.abs(smoothed[index].rms - smoothed[index - 1].rms);
     const time = smoothed[index].time;
+    const canPreserveIntro = starts.length === 1 && time >= boundarySettings.minBoundarySeconds;
+    const minimumSpacing = canPreserveIntro ? boundarySeconds : minSectionSeconds;
 
-    if (change >= threshold && time - starts[starts.length - 1] >= minSectionSeconds) {
+    if (change >= threshold && time - starts[starts.length - 1] >= minimumSpacing) {
       starts.push(time);
     }
   }
 
   const durationSeconds = maxSamples / sampleRate;
 
-  if (durationSeconds - starts[starts.length - 1] < 10 && starts.length > 1) {
+  if (starts[0] !== 0) {
+    starts.unshift(0);
+  }
+
+  const summarizeWindowRange = (startSeconds: number, endSeconds: number) => {
+    const sectionWindows = smoothed.filter((window) => window.time >= startSeconds && window.time < endSeconds);
+    const energy = sectionWindows.reduce((sum, window) => sum + window.rms, 0) / Math.max(sectionWindows.length, 1);
+    const shape = Array.from({ length: 4 }, (_, shapeIndex) => {
+      const startRatio = shapeIndex / 4;
+      const endRatio = (shapeIndex + 1) / 4;
+      const bucket = sectionWindows.filter((_, windowIndex) => {
+        const ratio = windowIndex / Math.max(sectionWindows.length, 1);
+        return ratio >= startRatio && ratio < endRatio;
+      });
+      const bucketEnergy = bucket.reduce((sum, window) => sum + window.rms, 0) / Math.max(bucket.length, 1);
+      return energy > 0 ? bucketEnergy / energy : 0;
+    });
+    return { durationSeconds: Math.max(1, endSeconds - startSeconds), energy, shape };
+  };
+
+  if (durationSeconds > boundarySeconds * 2) {
+    const firstBoundary = Math.min(boundarySeconds, durationSeconds - boundarySeconds);
+    const firstSection = summarizeWindowRange(0, firstBoundary);
+    const nextSection = summarizeWindowRange(firstBoundary, Math.min(durationSeconds, firstBoundary + boundarySeconds));
+    const nextDetectedStart = starts[1] ?? durationSeconds;
+
+    if (
+      nextDetectedStart > boundarySettings.shortBoundarySeconds &&
+      sectionShapeDifference(firstSection, nextSection) >= boundarySettings.shapeDifference
+    ) {
+      starts.push(firstBoundary);
+    }
+  }
+
+  const endBoundaryTime = durationSeconds - boundarySeconds;
+  const endingWindows = smoothed.filter((window) => window.time >= Math.max(0, endBoundaryTime));
+  const previousEndingWindows = smoothed.filter((window) => window.time >= Math.max(0, endBoundaryTime - boundarySeconds) && window.time < Math.max(0, endBoundaryTime));
+  const endingEnergy = endingWindows.reduce((sum, window) => sum + window.rms, 0) / Math.max(endingWindows.length, 1);
+  const previousEndingEnergy = previousEndingWindows.reduce((sum, window) => sum + window.rms, 0) / Math.max(previousEndingWindows.length, 1);
+  const endingFadeDrop = endingWindows.length >= 3 && (endingWindows.at(-1)?.rms ?? endingEnergy) < (endingWindows[0]?.rms ?? endingEnergy) * boundarySettings.fadeDropRatio;
+  const endingDifferent = previousEndingEnergy > 0 && endingEnergy < previousEndingEnergy * 0.9;
+
+  if (
+    starts.length &&
+    durationSeconds - starts[starts.length - 1] < boundarySettings.minBoundarySeconds &&
+    starts.length > 1 &&
+    !endingFadeDrop &&
+    !endingDifferent
+  ) {
     starts.pop();
   }
 
-  const rawSections = starts.slice(0, 9).map((startSeconds, index) => {
-    const endSeconds = starts[index + 1] ?? durationSeconds;
+  if (durationSeconds > boundarySeconds * 2) {
+    const lastStart = starts[starts.length - 1] ?? 0;
+
+    if (durationSeconds - lastStart > boundarySettings.shortBoundarySeconds && (endingFadeDrop || endingDifferent)) {
+      starts.push(endBoundaryTime);
+    }
+  }
+
+  const uniqueStarts = Array.from(new Set(starts.map((start) => Math.max(0, Math.min(durationSeconds - 1, Math.round(start)))))).sort((first, second) => first - second);
+  const rawSections = uniqueStarts.slice(0, 10).map((startSeconds, index) => {
+    const endSeconds = uniqueStarts[index + 1] ?? durationSeconds;
     const sectionWindows = smoothed.filter((window) => window.time >= startSeconds && window.time < endSeconds);
     const energy = sectionWindows.reduce((sum, window) => sum + window.rms, 0) / Math.max(sectionWindows.length, 1);
     const shape = Array.from({ length: 4 }, (_, shapeIndex) => {
@@ -1048,7 +1170,7 @@ function detectLikelySections(buffer: AudioBuffer, bpm: number | null, signature
     };
   });
 
-  return labelAnalysisSections(rawSections).map((section) => ({
+  return labelAnalysisSections(rawSections, sensitivity, bpm, signature).map((section) => ({
     ...section,
     bars: estimateBarsFromDuration(section.durationSeconds, bpm, signature),
   }));
@@ -1116,14 +1238,66 @@ function getStructureSectionBarCount(
   return Math.max(1, Math.min(64, rowBarCount || cellBarCount || existingBarCount || derivedBarCount));
 }
 
+function structureSectionHasGridData(section: Pick<StructureChartSection, 'cells' | 'rows'>) {
+  return Boolean(section.rows?.some((row) => row.some((cell) => cell.trim())) || section.cells?.some((cell) => cell.trim()));
+}
+
+function getStructureMatchIndex(
+  section: AnalysisSection,
+  index: number,
+  existingSections: StructureChartSection[],
+  usedIndexes: Set<number>
+) {
+  const matchers: Array<(builderSection: StructureChartSection, builderIndex: number) => boolean> = [
+    (builderSection) => structureTimingMatches(builderSection, section),
+    (builderSection) => builderSection.id === structureSectionId(section, index),
+    (_, builderIndex) => builderIndex === index,
+    (builderSection) => builderSection.label === section.label,
+  ];
+
+  for (const matcher of matchers) {
+    const matchIndex = existingSections.findIndex((builderSection, builderIndex) => !usedIndexes.has(builderIndex) && matcher(builderSection, builderIndex));
+
+    if (matchIndex >= 0) {
+      return matchIndex;
+    }
+  }
+
+  return -1;
+}
+
+function getStructureMatchedBuilderIndexes(sections: AnalysisSection[], existingSections: StructureChartSection[]) {
+  const usedIndexes = new Set<number>();
+
+  sections.forEach((section, index) => {
+    const matchIndex = getStructureMatchIndex(section, index, existingSections, usedIndexes);
+
+    if (matchIndex >= 0) {
+      usedIndexes.add(matchIndex);
+    }
+  });
+
+  return usedIndexes;
+}
+
+function structureSyncWouldRemoveFilledData(sections: AnalysisSection[], existingSections: StructureChartSection[]) {
+  const matchedIndexes = getStructureMatchedBuilderIndexes(sections, existingSections);
+
+  return existingSections.some((section, index) => !matchedIndexes.has(index) && structureSectionHasGridData(section));
+}
+
 function buildStructureChartSections(sections: AnalysisSection[], existingSections: StructureChartSection[] = []) {
+  const usedIndexes = new Set<number>();
+
   return sections.map((section, index): StructureChartSection => {
     const id = structureSectionId(section, index);
-    const existing =
-      existingSections.find((builderSection) => structureTimingMatches(builderSection, section)) ??
-      existingSections.find((builderSection) => builderSection.id === id) ??
-      existingSections[index] ??
-      existingSections.find((builderSection) => builderSection.label === section.label);
+    const existingIndex = getStructureMatchIndex(section, index, existingSections, usedIndexes);
+    const existing = existingIndex >= 0 ? existingSections[existingIndex] : undefined;
+
+    if (existingIndex >= 0) {
+      usedIndexes.add(existingIndex);
+    }
+
     const bars = getStructureSectionBarCount(section, existing);
 
     return {
@@ -1165,8 +1339,7 @@ function normalizeAnalysisSections(sections: AnalysisSection[], bpm: number | nu
         endSeconds,
         startSeconds,
       };
-    })
-    .sort((first, second) => first.startSeconds - second.startSeconds);
+    });
 }
 
 function getAnalysisStructureConfidence(sections: AnalysisSection[]) {
@@ -1618,6 +1791,7 @@ export default function Page() {
   const [analysisBpm, setAnalysisBpm] = useState('');
   const [analysisKey, setAnalysisKey] = useState<KeyName>(SAMPLE_CHART.key);
   const [analysisTimeSignature, setAnalysisTimeSignature] = useState<TimeSignature | ''>('');
+  const [introOutroSensitivity, setIntroOutroSensitivity] = useState<IntroOutroSensitivity>('Normal');
   const [structureChartSections, setStructureChartSections] = useState<StructureChartSection[]>([]);
   const [structureChartMessage, setStructureChartMessage] = useState('');
   const [copiedStructureRow, setCopiedStructureRow] = useState<string[] | null>(null);
@@ -1637,6 +1811,7 @@ export default function Page() {
         const storedAudioAnalyzeExpanded = window.localStorage.getItem(AUDIO_ANALYZE_EXPANDED_STORAGE_KEY);
         const storedAudioStructureExpanded = window.localStorage.getItem(AUDIO_STRUCTURE_EXPANDED_STORAGE_KEY);
         const storedStructureChartBuilderExpanded = window.localStorage.getItem(STRUCTURE_CHART_BUILDER_EXPANDED_STORAGE_KEY);
+        const storedIntroOutroSensitivity = window.localStorage.getItem(INTRO_OUTRO_SENSITIVITY_STORAGE_KEY);
 
         parsedSavedCharts = dedupeCharts(saved ? (JSON.parse(saved) as SavedChart[]) : []);
         setSavedCharts(parsedSavedCharts);
@@ -1678,6 +1853,10 @@ export default function Page() {
           setStructureChartBuilderExpanded(storedStructureChartBuilderExpanded === 'true');
         } else {
           setStructureChartBuilderExpanded(false);
+        }
+
+        if (storedIntroOutroSensitivity === 'Conservative' || storedIntroOutroSensitivity === 'Normal' || storedIntroOutroSensitivity === 'Sensitive') {
+          setIntroOutroSensitivity(storedIntroOutroSensitivity);
         }
 
         if (getInitialCloudStatus().connected) {
@@ -1787,14 +1966,17 @@ export default function Page() {
   const analysisStructureConfidence = getAnalysisStructureConfidence(analysisSections);
   const hasLikelyAabbPattern = isLikelyAabbPattern(analysisSections);
 
-  function currentAudioAnalysisSnapshot(): AudioAnalysisSnapshot | null {
-    if (!estimatedBpm && !estimatedKey && !analysisDurationSeconds && !estimatedBars && !analysisSections.length && !structureChartSections.length && !analysisFileName) {
+  function currentAudioAnalysisSnapshot(
+    sectionsOverride = analysisSections,
+    builderSectionsOverride = structureChartSections
+  ): AudioAnalysisSnapshot | null {
+    if (!estimatedBpm && !estimatedKey && !analysisDurationSeconds && !estimatedBars && !sectionsOverride.length && !builderSectionsOverride.length && !analysisFileName) {
       return null;
     }
 
     return {
       bpm: estimatedBpm,
-      chartBuilderSections: structureChartSections,
+      chartBuilderSections: builderSectionsOverride,
       detectedSections: detectedAnalysisSections,
       durationSeconds: analysisDurationSeconds,
       estimatedBars,
@@ -1802,7 +1984,8 @@ export default function Page() {
       key: estimatedKey,
       manualBpm: analysisBpm,
       manualKey: analysisKey,
-      sections: analysisSections,
+      sensitivity: introOutroSensitivity,
+      sections: sectionsOverride,
       status: analysisStatus,
       structureConfidence: analysisStructureConfidence,
       timeSignature: analysisTimeSignature,
@@ -1914,6 +2097,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     setAnalysisBpm(snapshot.manualBpm ?? (snapshot.bpm ? String(snapshot.bpm) : ''));
     setAnalysisKey(snapshot.manualKey ?? snapshot.key ?? fallbackKey);
     setAnalysisTimeSignature(snapshot.timeSignature);
+    setIntroOutroSensitivity(snapshot.sensitivity ?? 'Normal');
     setAnalysisStatus(snapshot.status);
     setStructureChartMessage(snapshot.chartBuilderSections?.length ? 'Structure chart builder restored with this chart.' : '');
   }
@@ -2064,7 +2248,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
       const key = estimateKeyFromAudioBuffer(audioBuffer);
       const durationSeconds = audioBuffer.duration;
       const totalBars = estimateBarsFromDuration(durationSeconds, bpm, analysisTimeSignature || timeSignature);
-      const sections = detectLikelySections(audioBuffer, bpm, analysisTimeSignature || timeSignature);
+      const sections = detectLikelySections(audioBuffer, bpm, analysisTimeSignature || timeSignature, introOutroSensitivity);
       await audioContext.close();
 
       if (!bpm && !key) {
@@ -2244,6 +2428,27 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     setStructureChartMessage(`Pasted ${copiedStructureRow.length} bar row.`);
   }
 
+  function syncBuilderFromCurrentStructure(options: { confirmRemoval?: boolean; message?: string } = {}) {
+    const shouldConfirm = options.confirmRemoval ?? true;
+
+    if (
+      shouldConfirm &&
+      structureSyncWouldRemoveFilledData(analysisSections, structureChartSections) &&
+      !window.confirm('Updating the builder from structure will remove filled grid data for deleted sections. Continue?')
+    ) {
+      return null;
+    }
+
+    const syncedSections = buildStructureChartSections(analysisSections, structureChartSections);
+    setStructureChartSections(syncedSections);
+    setStructureChartMessage(options.message ?? 'Builder updated from the current structure.');
+    return syncedSections;
+  }
+
+  function handleUpdateBuilderFromStructure() {
+    syncBuilderFromCurrentStructure();
+  }
+
   function handleCopyPreviousStructureSection(sectionIndex: number) {
     setStructureChartSections((sections) => {
       const currentSection = sections[sectionIndex];
@@ -2358,6 +2563,18 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
   }
 
   function handleDeleteAnalysisSection(index: number) {
+    const section = analysisSections[index];
+    const builderIndex = section ? getStructureMatchIndex(section, index, structureChartSections, new Set<number>()) : -1;
+    const builderSection = builderIndex >= 0 ? structureChartSections[builderIndex] : undefined;
+
+    if (
+      builderSection &&
+      structureSectionHasGridData(builderSection) &&
+      !window.confirm('Delete this section and remove its filled builder grid?')
+    ) {
+      return;
+    }
+
     setAnalysisSections((sections) => sections.filter((_, sectionIndex) => sectionIndex !== index));
   }
 
@@ -2409,7 +2626,17 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     setRightPanelSaveStatus('');
 
     try {
-      await saveChartRecord();
+      const syncedBuilderSections = syncBuilderFromCurrentStructure({
+        confirmRemoval: true,
+        message: 'Builder updated from the saved structure.',
+      });
+
+      if (!syncedBuilderSections) {
+        setStructureSaveLabel('Save Structure');
+        return;
+      }
+
+      await saveChartRecord({ audioAnalysis: currentAudioAnalysisSnapshot(analysisSections, syncedBuilderSections) });
       setSmartPasteMessage('Structure saved with this chart.');
       setStructureSaveLabel('Structure Saved ✓');
       setRightPanelSaveStatus('Saved to cloud ✓');
@@ -2459,6 +2686,13 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
       return;
     }
 
+    if (
+      structureSyncWouldRemoveFilledData(detectedAnalysisSections, structureChartSections) &&
+      !window.confirm('Resetting to detected structure will remove filled builder grids for sections that no longer match. Continue?')
+    ) {
+      return;
+    }
+
     setAnalysisSections(detectedAnalysisSections);
     setSmartPasteMessage('Structure reset to the detected analysis.');
   }
@@ -2476,6 +2710,11 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
       );
       setEstimatedBars(estimateBarsFromDuration(analysisDurationSeconds, estimatedBpm, effectiveSignature));
     }
+  }
+
+  function handleSetIntroOutroSensitivity(sensitivity: IntroOutroSensitivity) {
+    setIntroOutroSensitivity(sensitivity);
+    window.localStorage.setItem(INTRO_OUTRO_SENSITIVITY_STORAGE_KEY, sensitivity);
   }
 
   function handleCleanUpInput() {
@@ -3502,7 +3741,20 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                           </audio>
                         ) : null}
 
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                          <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
+                            Intro/Outro sensitivity
+                            <select
+                              className={INPUT_CLASS}
+                              value={introOutroSensitivity}
+                              onChange={(event) => handleSetIntroOutroSensitivity(event.target.value as IntroOutroSensitivity)}
+                            >
+                              <option value="Conservative">Conservative</option>
+                              <option value="Normal">Normal</option>
+                              <option value="Sensitive">Sensitive</option>
+                            </select>
+                          </label>
+                          <div className="flex flex-wrap items-center gap-2">
                           <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleAnalyzeAudio()} disabled={!analysisFileName || analysisStatus === 'Analyzing...'}>
                             Analyze Audio
                           </button>
@@ -3510,6 +3762,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                             Clear Audio Analysis
                           </button>
                           <span className="text-sm text-stone-300">{analysisStatus}</span>
+                          </div>
                         </div>
                         {analysisStatus === 'Analysis failed' ? (
                           <p className="text-sm text-amber-200">Could not estimate BPM. Enter manually.</p>
@@ -3606,7 +3859,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                                   </>
                                 ) : (
                                   <p className="text-xs text-stone-400">
-                                    {analysisSections.length} section{analysisSections.length === 1 ? '' : 's'} detected. Expand to edit labels and times.
+                                    {analysisSections.length} section{analysisSections.length === 1 ? '' : 's'} detected. Expand to edit labels and order.
                                   </p>
                                 )}
                               </div>
@@ -3705,6 +3958,9 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                                       </button>
                                       <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => void handleSaveBuilderProgress()}>
                                         {builderSaveLabel}
+                                      </button>
+                                      <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={handleUpdateBuilderFromStructure}>
+                                        Update Builder From Structure
                                       </button>
                                     </div>
                                     {rightPanelSaveStatus ? <p className="text-xs text-emerald-300">{rightPanelSaveStatus}</p> : null}
