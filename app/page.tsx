@@ -161,19 +161,17 @@ const SAMPLE_CHART: ChartSnapshot = {
   audioFilename: '',
   audioPath: '',
   audioUrl: '',
-  artist: 'Demo Artist',
+  artist: '',
   capo: '0',
   chartMode: 'simple',
-  chordChart: `A B C D
-A B C D`,
+  chordChart: '',
   feel: 'Straight',
-  key: 'A',
-  nashvilleChart: `1 2 3 4
-1 2 3 4`,
+  key: 'G',
+  nashvilleChart: '',
   notes: '',
-  tempo: '120',
+  tempo: '',
   timeSignature: '4/4',
-  title: 'Test Song',
+  title: 'Untitled Chart',
 };
 
 const SYMBOL_BUTTONS = [
@@ -1648,6 +1646,10 @@ function resolveChartAudioDownloadUrl(chart: Pick<ChartSnapshot, 'audioPath' | '
   return getChartAudioPublicUrl(chart);
 }
 
+function createLocalChartId() {
+  return `local-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+}
+
 function ChartLines({ text }: { text: string }) {
   return (
     <>
@@ -1698,6 +1700,7 @@ function SectionCard({
   onToggle,
   children,
   className = '',
+  headerAction,
 }: {
   title: string;
   description: string;
@@ -1705,6 +1708,7 @@ function SectionCard({
   onToggle: () => void;
   children: ReactNode;
   className?: string;
+  headerAction?: ReactNode;
 }) {
   return (
     <section className={`${SUBPANEL_CLASS} ${className}`.trim()}>
@@ -1713,9 +1717,12 @@ function SectionCard({
           <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-200">{title}</h2>
           <p className="text-xs leading-5 text-stone-400">{description}</p>
         </div>
-        <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={onToggle}>
-          {isOpen ? 'Hide' : 'Show'}
-        </button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {headerAction}
+          <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={onToggle}>
+            {isOpen ? 'Hide' : 'Show'}
+          </button>
+        </div>
       </div>
       {isOpen ? <div className="mt-4 space-y-4">{children}</div> : null}
     </section>
@@ -1756,11 +1763,12 @@ export default function Page() {
   const [builderSaveLabel, setBuilderSaveLabel] = useState('Save Builder Progress');
   const [rightPanelSaveStatus, setRightPanelSaveStatus] = useState('');
   const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
-  const [, setLastSavedSnapshot] = useState(() => JSON.stringify(SAMPLE_CHART));
+  const [lastSavedSnapshot, setLastSavedSnapshot] = useState(() => JSON.stringify(toChartSnapshot(SAMPLE_CHART)));
   const [hasMounted, setHasMounted] = useState(false);
   const [savedCharts, setSavedCharts] = useState<SavedChart[]>([]);
   const [selectedSavedChartId, setSelectedSavedChartId] = useState('');
   const [currentChartId, setCurrentChartId] = useState<string | null>(null);
+  const [forceNewChartOnNextSave, setForceNewChartOnNextSave] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>(getInitialCloudStatus());
   const [cloudMessage, setCloudMessage] = useState('');
   const [audioMessage, setAudioMessage] = useState('');
@@ -2064,6 +2072,7 @@ export default function Page() {
     setChartMode(chart.chartMode);
     setInput(chart.chordChart);
     setOutput(chart.nashvilleChart);
+    setForceNewChartOnNextSave(false);
     setLastSavedSnapshot(JSON.stringify(toChartSnapshot(chart)));
     applyAudioAnalysisSnapshot(chart.audioAnalysis ?? null, chart.key);
   }
@@ -2074,7 +2083,7 @@ export default function Page() {
     setAudioUrl(fields.audioUrl ?? '');
   }
 
-function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fallbackKey = selectedKey) {
+  function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fallbackKey = selectedKey) {
     if (!snapshot) {
       handleClearAudioAnalysis();
       return;
@@ -2104,6 +2113,45 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     setIntroOutroSensitivity(snapshot.sensitivity ?? 'Normal');
     setAnalysisStatus(snapshot.status);
     setStructureChartMessage(snapshot.chartBuilderSections?.length ? 'Structure chart builder restored with this chart.' : '');
+  }
+
+  function handleNewChart() {
+    const currentChartJson = JSON.stringify(toChartSnapshot(currentSnapshot()));
+
+    if (currentChartJson !== lastSavedSnapshot && !window.confirm('Start a new chart? Unsaved changes will be lost.')) {
+      return;
+    }
+
+    setAudioMessage('');
+    setAudioFilename('');
+    setAudioPath('');
+    setAudioUrl('');
+    setSongTitle(SAMPLE_CHART.title);
+    setArtist(SAMPLE_CHART.artist);
+    setSelectedKey(SAMPLE_CHART.key);
+    setTransposeToKey(SAMPLE_CHART.key);
+    setTimeSignature(SAMPLE_CHART.timeSignature);
+    setTempo(SAMPLE_CHART.tempo);
+    setCapo(SAMPLE_CHART.capo);
+    setFeel(SAMPLE_CHART.feel);
+    setNotes(SAMPLE_CHART.notes);
+    setChartMode(SAMPLE_CHART.chartMode);
+    setInput(SAMPLE_CHART.chordChart);
+    setOutput(SAMPLE_CHART.nashvilleChart);
+    setSelectedSavedChartId('');
+    setCurrentChartId(null);
+    setForceNewChartOnNextSave(true);
+    setShareUrl('');
+    setShowManualShareUrl(false);
+    setShareLabel('Share View');
+    setSmartPasteMessage('New blank chart ready.');
+    setSaveStatusMessage('');
+    setShowSaveToast(false);
+    setSaveToastLines([]);
+    setCopiedStructureRow(null);
+    handleClearAudioAnalysis();
+    setAnalysisKey(SAMPLE_CHART.key);
+    setLastSavedSnapshot(JSON.stringify(toChartSnapshot(SAMPLE_CHART)));
   }
 
   function persistSavedCharts(nextCharts: SavedChart[]) {
@@ -2304,6 +2352,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     setAnalysisDurationSeconds(0);
     setEstimatedBars(null);
     setAnalysisSections([]);
+    setDetectedAnalysisSections([]);
     setAnalysisBpm('');
     setAnalysisKey(selectedKey);
     setAnalysisTimeSignature('');
@@ -2900,10 +2949,10 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
   async function saveChartRecord(overrides: Partial<SavedChart> = {}) {
     const snapshot = currentSnapshot();
     const now = new Date().toISOString();
-    const existingById = currentChartId ? savedCharts.find((chart) => chart.id === currentChartId) : null;
-    const existingByChartKey = savedCharts.find((chart) => normalizeChartKey(chart) === normalizeChartKey(snapshot));
+    const existingById = !forceNewChartOnNextSave && currentChartId ? savedCharts.find((chart) => chart.id === currentChartId) : null;
+    const existingByChartKey = forceNewChartOnNextSave ? null : savedCharts.find((chart) => normalizeChartKey(chart) === normalizeChartKey(snapshot));
     const existingChart = existingById ?? existingByChartKey ?? null;
-    const id = overrides.id ?? existingChart?.id ?? currentChartId ?? (snapshot.title.trim() || `Untitled ${new Date().toLocaleString()}`);
+    const id = overrides.id ?? existingChart?.id ?? (!forceNewChartOnNextSave ? currentChartId : null) ?? createLocalChartId();
     const savedChart = {
       ...snapshot,
       ...overrides,
@@ -2918,6 +2967,7 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     persistSavedCharts(nextCharts);
     setSelectedSavedChartId(id);
     setCurrentChartId(id);
+    setForceNewChartOnNextSave(false);
 
       if (cloudStatus.connected) {
         const result = await upsertCloudChart(savedChart);
@@ -3348,6 +3398,11 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                 description="Set the song title, artist, key, and other performance basics."
                 isOpen={sectionOpen.songSetup}
                 onToggle={() => handleToggleSection('songSetup')}
+                headerAction={
+                  <button type="button" className={EMPHASIS_BUTTON_CLASS} onClick={handleNewChart}>
+                    New Chart
+                  </button>
+                }
               >
                 <section className="space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
                   <div className="grid gap-4 sm:grid-cols-2">
