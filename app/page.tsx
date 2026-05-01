@@ -1795,6 +1795,8 @@ export default function Page() {
   const [structureChartSections, setStructureChartSections] = useState<StructureChartSection[]>([]);
   const [structureChartMessage, setStructureChartMessage] = useState('');
   const [copiedStructureRow, setCopiedStructureRow] = useState<string[] | null>(null);
+  const [editingStructureTimeIndex, setEditingStructureTimeIndex] = useState<number | null>(null);
+  const [editingStructureTimeValue, setEditingStructureTimeValue] = useState('');
 
   useEffect(() => {
     const mountTimer = window.setTimeout(() => {
@@ -1961,6 +1963,8 @@ export default function Page() {
   const isQuickMode = uiMode === 'quick';
   const chartAudioDownloadUrl = resolveChartAudioDownloadUrl({ audioPath, audioUrl });
   const hasAttachedAudio = Boolean(audioUrl.trim() || audioPath.trim());
+  const analysisPlaybackUrl = analysisAudioUrl || chartAudioDownloadUrl;
+  const analysisPlaybackSourceLabel = analysisAudioUrl ? 'Temporary analysis audio' : chartAudioDownloadUrl ? 'Chart MP3 attachment' : '';
   const analysisDisplayTimeSignature = analysisTimeSignature || timeSignature;
   const analysisDisplayBars = estimateBarsFromDuration(analysisDurationSeconds, estimatedBpm, analysisDisplayTimeSignature) ?? estimatedBars;
   const analysisStructureConfidence = getAnalysisStructureConfidence(analysisSections);
@@ -2518,9 +2522,15 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
   }
 
   function handleJumpToAnalysisSection(seconds: number) {
+    if (!analysisPlaybackUrl) {
+      setSmartPasteMessage('Attach or upload audio to enable section playback.');
+      return;
+    }
+
     const player = audioPreviewRef.current;
 
     if (!player) {
+      setSmartPasteMessage('Audio player is not ready yet.');
       return;
     }
 
@@ -2532,6 +2542,66 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
     setAnalysisSections((sections) =>
       sections.map((section, sectionIndex) => (sectionIndex === index ? { ...section, label } : section))
     );
+  }
+
+  function handleStartStructureTimeEdit(index: number) {
+    const section = analysisSections[index];
+
+    if (!section) {
+      return;
+    }
+
+    setEditingStructureTimeIndex(index);
+    setEditingStructureTimeValue(formatDuration(section.startSeconds));
+  }
+
+  function handleCancelStructureTimeEdit() {
+    setEditingStructureTimeIndex(null);
+    setEditingStructureTimeValue('');
+  }
+
+  function handleUseCurrentPlaybackTime() {
+    const player = audioPreviewRef.current;
+
+    if (!player) {
+      return;
+    }
+
+    setEditingStructureTimeValue(formatDuration(player.currentTime));
+  }
+
+  function handleSaveStructureTimeEdit(index: number) {
+    const nextSeconds = parseDurationInput(editingStructureTimeValue);
+    const section = analysisSections[index];
+
+    if (!section || nextSeconds === null || nextSeconds < 0 || (analysisDurationSeconds && nextSeconds > analysisDurationSeconds)) {
+      setSmartPasteMessage('Use mm:ss inside the song duration.');
+      return;
+    }
+
+    if (nextSeconds >= section.endSeconds) {
+      setSmartPasteMessage('Section timestamp must be before that section ends.');
+      return;
+    }
+
+    setAnalysisSections((sections) =>
+      sections.map((currentSection, sectionIndex) => {
+        if (sectionIndex !== index) {
+          return currentSection;
+        }
+
+        const durationSeconds = Math.max(1, currentSection.endSeconds - nextSeconds);
+
+        return {
+          ...currentSection,
+          bars: estimateBarsFromDuration(durationSeconds, estimatedBpm, analysisDisplayTimeSignature),
+          durationSeconds,
+          startSeconds: nextSeconds,
+        };
+      })
+    );
+    setSmartPasteMessage('Section timestamp updated.');
+    handleCancelStructureTimeEdit();
   }
 
   function handleUpdateAnalysisSectionTime(index: number, field: 'startSeconds' | 'endSeconds', value: string) {
@@ -3735,11 +3805,16 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                             onChange={(event) => handleAudioAnalysisFile(event.target.files?.[0] ?? null)}
                           />
                         </label>
-                        {analysisAudioUrl ? (
-                          <audio ref={audioPreviewRef} className="w-full" controls src={analysisAudioUrl}>
+                        {analysisPlaybackUrl ? (
+                          <audio ref={audioPreviewRef} className="w-full" controls src={analysisPlaybackUrl}>
                             <track kind="captions" />
                           </audio>
                         ) : null}
+                        {analysisPlaybackUrl ? (
+                          <p className="text-xs text-stone-400">Playback source: {analysisPlaybackSourceLabel}.</p>
+                        ) : (
+                          <p className="text-xs text-stone-400">Attach or upload audio to enable section playback.</p>
+                        )}
 
                         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                           <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
@@ -3799,13 +3874,59 @@ function applyAudioAnalysisSnapshot(snapshot: AudioAnalysisSnapshot | null, fall
                                       {analysisSections.map((section, index) => (
                                         <div key={`${section.startSeconds}-${section.endSeconds}-${section.label}-${index}`} className="rounded-lg border border-emerald-900/20 bg-black/15 p-2">
                                           <div className="flex flex-wrap items-center gap-2">
+                                            <span className="font-medium text-stone-100">{section.label}</span>
                                             <button
                                               type="button"
-                                              className="text-left text-emerald-100 underline decoration-emerald-700 underline-offset-4"
+                                              className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`}
                                               onClick={() => handleJumpToAnalysisSection(section.startSeconds)}
+                                              disabled={!analysisPlaybackUrl}
                                             >
-                                              Play {formatDuration(section.startSeconds)}
+                                              Play
                                             </button>
+                                            {editingStructureTimeIndex === index ? (
+                                              <div className="flex flex-wrap items-center gap-1.5">
+                                                <input
+                                                  className={`${INPUT_CLASS} h-8 w-16 px-2 py-1 text-center text-xs`}
+                                                  value={editingStructureTimeValue}
+                                                  onChange={(event) => setEditingStructureTimeValue(event.target.value)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === 'Enter') {
+                                                      event.preventDefault();
+                                                      handleSaveStructureTimeEdit(index);
+                                                    }
+
+                                                    if (event.key === 'Escape') {
+                                                      event.preventDefault();
+                                                      handleCancelStructureTimeEdit();
+                                                    }
+                                                  }}
+                                                  aria-label={`Edit timestamp for ${section.label}`}
+                                                />
+                                                <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`} onClick={() => handleSaveStructureTimeEdit(index)}>
+                                                  Save
+                                                </button>
+                                                {analysisPlaybackUrl ? (
+                                                  <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`} onClick={handleUseCurrentPlaybackTime}>
+                                                    Use Player Time
+                                                  </button>
+                                                ) : null}
+                                                <button type="button" className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`} onClick={handleCancelStructureTimeEdit}>
+                                                  Cancel
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <>
+                                                <span className="text-xs font-medium text-stone-300">{formatDuration(section.startSeconds)}</span>
+                                                <button
+                                                  type="button"
+                                                  className={`${SECONDARY_BUTTON_CLASS} px-2 py-1 text-xs`}
+                                                  onClick={() => handleStartStructureTimeEdit(index)}
+                                                  aria-label={`Edit timestamp for ${section.label}`}
+                                                >
+                                                  Edit
+                                                </button>
+                                              </>
+                                            )}
                                             <span className="text-[10px] uppercase tracking-[0.14em] text-stone-500">
                                               {section.bars ? `approx. ${section.bars} bars` : 'bars N/A'} - {section.confidence}
                                             </span>
