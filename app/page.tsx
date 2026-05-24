@@ -25,7 +25,9 @@ import {
   isUuid,
 } from './lib/cloudSync';
 
-const MAJOR_KEYS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
+const MAJOR_KEYS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'] as const;
+const MINOR_KEYS = ['Cm', 'Dbm', 'Dm', 'Ebm', 'Em', 'Fm', 'Gbm', 'Gm', 'Abm', 'Am', 'Bbm', 'Bm'] as const;
+const KEY_OPTIONS = [...MAJOR_KEYS, ...MINOR_KEYS] as const;
 const NOTE_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'] as const;
 const TIME_SIGNATURES = ['2/4', '3/4', '4/4', '6/8', 'Cut Time'] as const;
 const FEEL_OPTIONS = ['Straight', 'Swing', 'Shuffle', 'Waltz', 'Fast 2', 'Slow Ballad'] as const;
@@ -48,7 +50,7 @@ const SECTION_LABELS = [
 ] as const;
 
 type ChartMode = 'simple' | 'strict';
-type KeyName = (typeof MAJOR_KEYS)[number];
+type KeyName = (typeof KEY_OPTIONS)[number];
 type TimeSignature = (typeof TIME_SIGNATURES)[number];
 type MeasureGridStyle = 'off' | 'simple-bars' | 'beat-dots';
 type UiMode = 'quick' | 'pro';
@@ -435,13 +437,18 @@ const NOTE_TO_SEMITONE: Record<string, number> = {
 
 const SEMITONE_TO_NUMBER = ['1', 'b2', '2', 'b3', '3', '4', 'b5', '5', 'b6', '6', 'b7', '7'];
 
-const CHROMATIC_SPELLINGS: Record<KeyName, string[]> = {
+const CHROMATIC_SPELLINGS: Record<(typeof MAJOR_KEYS)[number], string[]> = {
+  Ab: ['Ab', 'A', 'Bb', 'B', 'C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G'],
   C: ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'],
+  Db: ['Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B', 'C'],
   D: ['D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B', 'C', 'C#'],
+  Eb: ['Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B', 'C', 'Db', 'D'],
   E: ['E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B', 'C', 'C#', 'D', 'D#'],
   F: ['F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B', 'C', 'Db', 'D', 'Eb', 'E'],
+  Gb: ['Gb', 'G', 'Ab', 'A', 'Bb', 'B', 'C', 'Db', 'D', 'Eb', 'E', 'F'],
   G: ['G', 'Ab', 'A', 'Bb', 'B', 'C', 'Db', 'D', 'Eb', 'E', 'F', 'F#'],
   A: ['A', 'Bb', 'B', 'C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#'],
+  Bb: ['Bb', 'B', 'C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A'],
   B: ['B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#'],
 };
 
@@ -459,6 +466,14 @@ const NUMBER_TO_OFFSET: Record<string, number> = {
   b7: 10,
   '7': 11,
 };
+
+function getKeyTonic(key: KeyName | string) {
+  return key.endsWith('m') ? key.slice(0, -1) : key;
+}
+
+function isMinorKey(key: KeyName | string) {
+  return key.endsWith('m');
+}
 
 function normalizeChartInput(text: string) {
   return text
@@ -869,7 +884,20 @@ function estimateKeyFromAudioBuffer(buffer: AudioBuffer): KeyName | null {
   }
 
   const majorProfile = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
-  const keySemitones: Record<KeyName, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  const keySemitones: Record<(typeof MAJOR_KEYS)[number], number> = {
+    C: 0,
+    Db: 1,
+    D: 2,
+    Eb: 3,
+    E: 4,
+    F: 5,
+    Gb: 6,
+    G: 7,
+    Ab: 8,
+    A: 9,
+    Bb: 10,
+    B: 11,
+  };
   let bestKey: KeyName | null = null;
   let bestScore = Number.NEGATIVE_INFINITY;
 
@@ -1379,7 +1407,7 @@ function isLikelyAabbPattern(sections: AnalysisSection[]) {
 
 function convertStrictRoot(root: string, key: KeyName) {
   const noteValue = NOTE_TO_SEMITONE[root];
-  const keyValue = NOTE_TO_SEMITONE[key];
+  const keyValue = NOTE_TO_SEMITONE[getKeyTonic(key)];
 
   if (noteValue === undefined || keyValue === undefined) {
     return null;
@@ -1390,7 +1418,8 @@ function convertStrictRoot(root: string, key: KeyName) {
 
 function convertSimpleRoot(root: string, key: KeyName) {
   const rootLetter = root[0] as (typeof NOTE_LETTERS)[number];
-  const keyIndex = NOTE_LETTERS.indexOf(key);
+  const keyLetter = getKeyTonic(key)[0] as (typeof NOTE_LETTERS)[number];
+  const keyIndex = NOTE_LETTERS.indexOf(keyLetter);
   const rootIndex = NOTE_LETTERS.indexOf(rootLetter);
 
   if (keyIndex === -1 || rootIndex === -1) {
@@ -1465,12 +1494,13 @@ function buildConvertedChart(input: string, key: KeyName, chartMode: ChartMode):
 
 function rootFromStrictNumber(number: string, key: KeyName) {
   const offset = NUMBER_TO_OFFSET[number];
-  return offset === undefined ? null : CHROMATIC_SPELLINGS[key][offset];
+  return offset === undefined ? null : CHROMATIC_SPELLINGS[getKeyTonic(key) as (typeof MAJOR_KEYS)[number]][offset];
 }
 
 function rootFromSimpleNumber(number: string, key: KeyName) {
   const degree = Number.parseInt(number, 10);
-  const keyIndex = NOTE_LETTERS.indexOf(key);
+  const keyLetter = getKeyTonic(key)[0] as (typeof NOTE_LETTERS)[number];
+  const keyIndex = NOTE_LETTERS.indexOf(keyLetter);
 
   if (!Number.isInteger(degree) || degree < 1 || degree > 7 || keyIndex === -1) {
     return null;
@@ -1547,8 +1577,9 @@ function getPlayInKey(concertKey: KeyName, capo: string) {
   }
 
   const names = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
-  const concertSemitone = NOTE_TO_SEMITONE[concertKey];
-  return names[(concertSemitone - (capoValue % 12) + 12) % 12];
+  const concertSemitone = NOTE_TO_SEMITONE[getKeyTonic(concertKey)];
+  const playInTonic = names[(concertSemitone - (capoValue % 12) + 12) % 12];
+  return isMinorKey(concertKey) ? `${playInTonic}m` : playInTonic;
 }
 
 function buildSnapshot(values: {
@@ -1597,7 +1628,7 @@ function toChartSnapshot(chart: PrintableChartData): ChartSnapshot {
     chartMode: chart.chartMode === 'strict' ? 'strict' : 'simple',
     chordChart: chart.chordChart ?? '',
     feel: chart.feel ?? SAMPLE_CHART.feel,
-    key: MAJOR_KEYS.includes(chart.key as KeyName) ? (chart.key as KeyName) : SAMPLE_CHART.key,
+    key: KEY_OPTIONS.includes(chart.key as KeyName) ? (chart.key as KeyName) : SAMPLE_CHART.key,
     nashvilleChart: chart.nashvilleChart ?? '',
     notes: chart.notes ?? '',
     tempo: chart.tempo ?? SAMPLE_CHART.tempo,
@@ -1620,7 +1651,7 @@ function normalizeSavedChart(chart: CloudSavedChart): SavedChart {
     chordChart: chart.chordChart ?? '',
     feel: chart.feel ?? '',
     id: chart.id,
-    key: MAJOR_KEYS.includes(chart.key as KeyName) ? (chart.key as KeyName) : 'C',
+    key: KEY_OPTIONS.includes(chart.key as KeyName) ? (chart.key as KeyName) : 'C',
     nashvilleChart: chart.nashvilleChart ?? '',
     notes: chart.notes ?? '',
     savedAt: chart.savedAt ?? new Date().toISOString(),
@@ -3420,7 +3451,7 @@ export default function Page() {
                     <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
                       Key
                       <select className={INPUT_CLASS} value={selectedKey} onChange={(event) => setSelectedKey(event.target.value as KeyName)}>
-                        {MAJOR_KEYS.map((key) => (
+                        {KEY_OPTIONS.map((key) => (
                           <option key={key} value={key}>
                             {key}
                           </option>
@@ -3476,7 +3507,7 @@ export default function Page() {
                         <label className="flex flex-col gap-2 text-sm font-medium text-zinc-200">
                           Transpose To Key
                           <select className={INPUT_CLASS} value={transposeToKey} onChange={(event) => setTransposeToKey(event.target.value as KeyName)}>
-                            {MAJOR_KEYS.map((key) => (
+                            {KEY_OPTIONS.map((key) => (
                               <option key={key} value={key}>
                                 {key}
                               </option>
