@@ -41,6 +41,7 @@ export type AppHeartbeat = {
   appName: string;
   id: string;
   lastPing: string;
+  lastSource?: 'manual' | 'cron' | '';
   pingCount: number;
 };
 

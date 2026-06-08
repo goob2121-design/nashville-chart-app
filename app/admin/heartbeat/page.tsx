@@ -69,6 +69,9 @@ export default function HeartbeatAdminPage() {
     void loadHeartbeat();
   }, []);
 
+  const heartbeatSourceLabel =
+    heartbeat?.lastSource === 'manual' ? 'Manual' : heartbeat?.lastSource === 'cron' ? 'Cron' : 'Unknown';
+
   return (
     <AuthGate>
       <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.14),_transparent_28%),linear-gradient(180deg,_#1c1917_0%,_#0c0a09_48%,_#020617_100%)] px-4 py-8 text-stone-100">
@@ -86,7 +89,7 @@ export default function HeartbeatAdminPage() {
           </header>
 
           <section className={PANEL_CLASS}>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-4">
               <div className="rounded-2xl border border-amber-950/20 bg-stone-950/45 p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Last Heartbeat</p>
                 <p className="mt-2 text-sm text-stone-100">
@@ -100,6 +103,10 @@ export default function HeartbeatAdminPage() {
               <div className="rounded-2xl border border-amber-950/20 bg-stone-950/45 p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Status</p>
                 <p className="mt-2 text-sm text-stone-100">{status}</p>
+              </div>
+              <div className="rounded-2xl border border-amber-950/20 bg-stone-950/45 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-stone-400">Last Source</p>
+                <p className="mt-2 text-sm text-stone-100">{heartbeatSourceLabel}</p>
               </div>
             </div>
 

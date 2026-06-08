@@ -5,12 +5,14 @@ const AUTH_COOKIE_NAME = 'pinnacle-chart-auth=true';
 type HeartbeatRow = {
   app_name: string;
   id: string;
+  last_source?: string | null;
   last_ping: string | null;
   ping_count: number | null;
 };
 
 type HeartbeatUpsertRow = {
   app_name: string;
+  last_source?: 'manual' | 'cron';
   last_ping: string;
   ping_count: number;
 };
@@ -20,6 +22,7 @@ export function rowToHeartbeat(row: HeartbeatRow) {
     appName: row.app_name,
     id: row.id,
     lastPing: row.last_ping ?? '',
+    lastSource: row.last_source === 'manual' || row.last_source === 'cron' ? row.last_source : '',
     pingCount: row.ping_count ?? 0,
   };
 }
@@ -77,7 +80,7 @@ export async function loadHeartbeatRow(supabase: ServerSupabaseClient, appName: 
   return { data: data as HeartbeatRow | null, error };
 }
 
-export async function upsertHeartbeatRow(supabase: ServerSupabaseClient, appName: string) {
+export async function upsertHeartbeatRow(supabase: ServerSupabaseClient, appName: string, source: 'manual' | 'cron') {
   const { data: existingData, error: existingError } = await loadHeartbeatRow(supabase, appName);
 
   if (existingError) {
@@ -87,14 +90,29 @@ export async function upsertHeartbeatRow(supabase: ServerSupabaseClient, appName
   const nextPingCount = (existingData?.ping_count ?? 0) + 1;
   const payload: HeartbeatUpsertRow = {
     app_name: appName,
+    last_source: source,
     last_ping: new Date().toISOString(),
     ping_count: nextPingCount,
   };
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('app_heartbeat')
     .upsert(payload as never, { onConflict: 'app_name' })
     .select('*')
     .single();
+
+  if (error?.message?.toLowerCase().includes('last_source')) {
+    const fallbackPayload = {
+      app_name: appName,
+      last_ping: payload.last_ping,
+      ping_count: payload.ping_count,
+    };
+
+    ({ data, error } = await supabase
+      .from('app_heartbeat')
+      .upsert(fallbackPayload as never, { onConflict: 'app_name' })
+      .select('*')
+      .single());
+  }
 
   if (error) {
     return { heartbeat: null as ReturnType<typeof rowToHeartbeat> | null, error: error.message };

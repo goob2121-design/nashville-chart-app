@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as { appName?: string };
   const appName = body.appName?.trim() || 'chart-app';
-  const result = await upsertHeartbeatRow(supabase, appName);
+  const result = await upsertHeartbeatRow(supabase, appName, 'manual');
 
   if (result.error || !result.heartbeat) {
     console.error('[supabase-heartbeat-manual] POST failed', { appName, error: result.error });

@@ -19,7 +19,7 @@ async function handleCronPing(request: Request) {
   }
 
   const appName = new URL(request.url).searchParams.get('appName') || 'chart-app';
-  const result = await upsertHeartbeatRow(supabase, appName);
+  const result = await upsertHeartbeatRow(supabase, appName, 'cron');
 
   if (result.error || !result.heartbeat) {
     console.error('[supabase-heartbeat-cron] Ping failed', { appName, error: result.error });

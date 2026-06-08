@@ -3910,12 +3910,15 @@ export default function Page() {
                       >
                         {isPingingSupabase ? 'Pinging...' : 'Ping Supabase'}
                       </button>
-                      <p className="text-xs text-stone-400">
-                        Last ping: {heartbeat?.lastPing ? new Date(heartbeat.lastPing).toLocaleString() : 'No ping yet'}
-                      </p>
-                      <p className="text-xs text-stone-500">
-                        Ping count: {heartbeat?.pingCount ?? 0}
-                      </p>
+                        <p className="text-xs text-stone-400">
+                          Last ping: {heartbeat?.lastPing ? new Date(heartbeat.lastPing).toLocaleString() : 'No ping yet'}
+                        </p>
+                        <p className="text-xs text-stone-400">
+                          Last source: {heartbeat?.lastSource === 'manual' ? 'Manual' : heartbeat?.lastSource === 'cron' ? 'Cron' : 'Unknown'}
+                        </p>
+                        <p className="text-xs text-stone-500">
+                          Ping count: {heartbeat?.pingCount ?? 0}
+                        </p>
                     </div>
                     {heartbeatMessage ? <p className="text-sm text-stone-300">{heartbeatMessage}</p> : null}
                   </section>
