@@ -21,7 +21,7 @@ export default function HeartbeatAdminPage() {
 
   async function loadHeartbeat() {
     setIsLoading(true);
-    const response = await fetch('/api/admin/supabase-heartbeat', {
+    const response = await fetch('/api/heartbeat/manual', {
       method: 'GET',
       cache: 'no-store',
     });
@@ -43,7 +43,7 @@ export default function HeartbeatAdminPage() {
 
   async function handlePing() {
     setIsPinging(true);
-    const response = await fetch('/api/admin/supabase-heartbeat', {
+    const response = await fetch('/api/heartbeat/manual', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

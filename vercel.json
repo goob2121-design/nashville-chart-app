@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/admin/supabase-heartbeat",
+      "path": "/api/heartbeat/cron",
       "schedule": "0 6 */3 * *"
     }
   ]

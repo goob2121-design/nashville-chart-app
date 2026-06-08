@@ -3011,7 +3011,7 @@ export default function Page() {
   }
 
   async function fetchHeartbeatFromApi() {
-    const response = await fetch('/api/admin/supabase-heartbeat', {
+    const response = await fetch('/api/heartbeat/manual', {
       method: 'GET',
       cache: 'no-store',
     });
@@ -3033,7 +3033,7 @@ export default function Page() {
     setIsPingingSupabase(true);
     setHeartbeatMessage('');
 
-    const response = await fetch('/api/admin/supabase-heartbeat', {
+    const response = await fetch('/api/heartbeat/manual', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
