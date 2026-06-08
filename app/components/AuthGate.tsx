@@ -3,6 +3,8 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 
 const AUTH_STORAGE_KEY = 'pinnacle-chart-auth';
+const AUTH_COOKIE = 'pinnacle-chart-auth=true; path=/; SameSite=Lax';
+const AUTH_COOKIE_CLEAR = 'pinnacle-chart-auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
 const LOGO_SRC = '/pinnacle-logo.png';
 
 export function BrandHeaderTitle({ subtitle }: { subtitle?: string }) {
@@ -51,6 +53,7 @@ export function AuthGate({
 
     if (!configuredPassword || password === configuredPassword) {
       window.localStorage.setItem(AUTH_STORAGE_KEY, 'true');
+      document.cookie = AUTH_COOKIE;
       setIsAuthenticated(true);
       setError('');
       return;
@@ -61,6 +64,7 @@ export function AuthGate({
 
   function handleLogout() {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    document.cookie = AUTH_COOKIE_CLEAR;
     setIsAuthenticated(false);
     setPassword('');
   }

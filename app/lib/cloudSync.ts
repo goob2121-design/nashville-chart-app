@@ -37,6 +37,13 @@ export type CloudStatus = {
   message: string;
 };
 
+export type AppHeartbeat = {
+  appName: string;
+  id: string;
+  lastPing: string;
+  pingCount: number;
+};
+
 type ChartRow = {
   audio_analysis_data: unknown | null;
   id: string;
@@ -76,6 +83,13 @@ type SetlistItemRow = {
   setlist_id: string;
   chart_id: string;
   position: number;
+};
+
+type HeartbeatRow = {
+  app_name: string;
+  id: string;
+  last_ping: string | null;
+  ping_count: number | null;
 };
 
 let client: SupabaseClient | null | undefined;
@@ -348,6 +362,15 @@ function rowToChart(row: ChartRow): SavedChart {
   };
 }
 
+function rowToHeartbeat(row: HeartbeatRow): AppHeartbeat {
+  return {
+    appName: row.app_name,
+    id: row.id,
+    lastPing: row.last_ping ?? '',
+    pingCount: row.ping_count ?? 0,
+  };
+}
+
 function setlistToRow(setlist: Setlist, isFavorite = false): SetlistInsertRow {
   return {
     ...(isUuid(setlist.id) ? { id: setlist.id } : {}),
@@ -568,6 +591,52 @@ export async function updateCloudChartFavorite(id: string, isFavorite: boolean) 
 
   const { error } = await supabase.from('charts').update({ is_favorite: isFavorite }).eq('id', id);
   return error ? { ok: false, error: cloudError(error) } : { ok: true, error: '' };
+}
+
+export async function fetchAppHeartbeat(appName = 'chart-app') {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return { heartbeat: null as AppHeartbeat | null, error: 'Missing Supabase env vars.' };
+  }
+
+  const { data, error } = await supabase.from('app_heartbeat').select('*').eq('app_name', appName).maybeSingle();
+
+  return error
+    ? { heartbeat: null as AppHeartbeat | null, error: cloudError(error) }
+    : { heartbeat: data ? rowToHeartbeat(data as HeartbeatRow) : null, error: '' };
+}
+
+export async function pingSupabaseHeartbeat(appName = 'chart-app') {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return { ok: false, error: 'Missing Supabase env vars.', heartbeat: null as AppHeartbeat | null };
+  }
+
+  const existingResult = await fetchAppHeartbeat(appName);
+
+  if (existingResult.error) {
+    return { ok: false, error: existingResult.error, heartbeat: null as AppHeartbeat | null };
+  }
+
+  const nextPingCount = (existingResult.heartbeat?.pingCount ?? 0) + 1;
+  const { data, error } = await supabase
+    .from('app_heartbeat')
+    .upsert(
+      {
+        app_name: appName,
+        last_ping: new Date().toISOString(),
+        ping_count: nextPingCount,
+      },
+      { onConflict: 'app_name' }
+    )
+    .select('*')
+    .single();
+
+  return error
+    ? { ok: false, error: cloudError(error), heartbeat: null as AppHeartbeat | null }
+    : { ok: true, error: '', heartbeat: rowToHeartbeat(data as HeartbeatRow) };
 }
 
 export async function fetchCloudSetlists() {

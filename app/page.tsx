@@ -20,6 +20,7 @@ import {
   removeChartAudioFile,
   uploadChartAudioFile,
   upsertCloudChart,
+  type AppHeartbeat,
   type CloudStatus,
   type SavedChart as CloudSavedChart,
   isUuid,
@@ -1802,6 +1803,9 @@ export default function Page() {
   const [forceNewChartOnNextSave, setForceNewChartOnNextSave] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>(getInitialCloudStatus());
   const [cloudMessage, setCloudMessage] = useState('');
+  const [heartbeat, setHeartbeat] = useState<AppHeartbeat | null>(null);
+  const [heartbeatMessage, setHeartbeatMessage] = useState('');
+  const [isPingingSupabase, setIsPingingSupabase] = useState(false);
   const [audioMessage, setAudioMessage] = useState('');
   const [smartPasteMessage, setSmartPasteMessage] = useState('');
   const [isShareView, setIsShareView] = useState(false);
@@ -1989,6 +1993,35 @@ export default function Page() {
       }
     };
   }, [analysisAudioUrl]);
+
+  useEffect(() => {
+    if (!hasMounted || !cloudStatus.connected) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadHeartbeat() {
+      const result = await fetchHeartbeatFromApi();
+
+      if (cancelled) {
+        return;
+      }
+
+      if (result.error) {
+        setHeartbeatMessage(result.error);
+        return;
+      }
+
+      setHeartbeat(result.heartbeat);
+    }
+
+    void loadHeartbeat();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasMounted, cloudStatus.connected]);
 
   useEffect(() => {
     setStructureChartSections((currentSections) => buildStructureChartSections(analysisSections, currentSections));
@@ -2977,6 +3010,49 @@ export default function Page() {
     }
   }
 
+  async function fetchHeartbeatFromApi() {
+    const response = await fetch('/api/admin/supabase-heartbeat', {
+      method: 'GET',
+      cache: 'no-store',
+    });
+    const result = (await response.json()) as { error?: string; heartbeat?: AppHeartbeat | null };
+
+    return {
+      ok: response.ok,
+      error: result.error ?? '',
+      heartbeat: result.heartbeat ?? null,
+    };
+  }
+
+  async function handlePingSupabase() {
+    if (!cloudStatus.connected) {
+      setHeartbeatMessage('Cloud sync is required for Supabase heartbeat.');
+      return;
+    }
+
+    setIsPingingSupabase(true);
+    setHeartbeatMessage('');
+
+    const response = await fetch('/api/admin/supabase-heartbeat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ appName: 'chart-app' }),
+    });
+    const result = (await response.json()) as { error?: string; heartbeat?: AppHeartbeat | null };
+
+    if (!response.ok || !result.heartbeat) {
+      setHeartbeatMessage(result.error || 'Supabase ping failed.');
+      setIsPingingSupabase(false);
+      return;
+    }
+
+    setHeartbeat(result.heartbeat);
+    setHeartbeatMessage('Supabase ping successful — last activity updated.');
+    setIsPingingSupabase(false);
+  }
+
   async function saveChartRecord(overrides: Partial<SavedChart> = {}) {
     const snapshot = currentSnapshot();
     const now = new Date().toISOString();
@@ -3818,6 +3894,30 @@ export default function Page() {
                     )}
 
                     {audioMessage ? <p className="text-sm text-stone-300">{audioMessage}</p> : null}
+                  </section>
+
+                  <section className="no-print space-y-3 rounded-2xl border border-amber-950/20 bg-black/10 p-4">
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-medium text-zinc-200">Supabase Heartbeat</h3>
+                      <p className="text-xs text-stone-400">Manual admin ping to keep the cloud project active with a tiny real database update.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className={SECONDARY_BUTTON_CLASS}
+                        onClick={() => void handlePingSupabase()}
+                        disabled={!cloudStatus.connected || isPingingSupabase}
+                      >
+                        {isPingingSupabase ? 'Pinging...' : 'Ping Supabase'}
+                      </button>
+                      <p className="text-xs text-stone-400">
+                        Last ping: {heartbeat?.lastPing ? new Date(heartbeat.lastPing).toLocaleString() : 'No ping yet'}
+                      </p>
+                      <p className="text-xs text-stone-500">
+                        Ping count: {heartbeat?.pingCount ?? 0}
+                      </p>
+                    </div>
+                    {heartbeatMessage ? <p className="text-sm text-stone-300">{heartbeatMessage}</p> : null}
                   </section>
 
                   <section className="space-y-3">
